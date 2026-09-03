@@ -23,6 +23,10 @@ Alerts are deduplicated for 15 minutes. Quiet hours, snooze, and disarm controls
 
 Requirements: macOS 13 or newer and the Swift command-line tools.
 
+For a ready-built app, download `Dev-On-Call-macOS.zip` from the [latest release](https://github.com/wicolian/dev-on-call/releases/latest), unzip it, and move **Dev On Call.app** to Applications. Release builds are ad-hoc signed but not Apple-notarized, so macOS may require **Control-click → Open** the first time.
+
+Or build from source:
+
 ```bash
 git clone https://github.com/wicolian/dev-on-call.git
 cd dev-on-call
