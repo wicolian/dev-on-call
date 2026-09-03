@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core self-tests
+        run: swift run dev-on-call-self-test
+      - name: Build menu-bar app
+        run: swift build -c release --product DevOnCall
+      - name: Build companion CLI
+        run: swift build -c release --product dev-on-call
