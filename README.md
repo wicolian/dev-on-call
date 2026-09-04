@@ -19,11 +19,29 @@ System notifications, sound, and speech are **off by default**. The app never ch
 
 Alerts are deduplicated for 15 minutes. Quiet hours, snooze, and disarm controls are one click from the menu bar.
 
-## Install locally
+## Install
 
-Requirements: macOS 13 or newer and the Swift command-line tools.
+Requirements: macOS 13 or newer.
 
-For a ready-built app, download `Dev-On-Call-macOS.zip` from the [latest release](https://github.com/wicolian/dev-on-call/releases/latest), unzip it, and move **Dev On Call.app** to Applications. Release builds are ad-hoc signed but not Apple-notarized, so macOS may require **Control-click → Open** the first time.
+Download the [latest DMG](https://github.com/wicolian/dev-on-call/releases/latest/download/Dev-On-Call-macOS.dmg), open it, and drag **Dev On Call.app** to Applications. Release builds are ad-hoc signed but not Apple-notarized, so macOS may require **Control-click → Open** the first time.
+
+Or install the app and CLI without cloning:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wicolian/dev-on-call/main/scripts/install.sh | bash
+```
+
+You can inspect [the install script](scripts/install.sh) before running it. It verifies the release checksum and installs into `~/Applications` and `~/.local/bin` without `sudo`.
+
+Homebrew:
+
+```bash
+brew install --cask wicolian/tap/dev-on-call
+```
+
+### Build from source
+
+Building requires the Swift command-line tools.
 
 Or build from source:
 
@@ -36,7 +54,9 @@ open "$HOME/Applications/Dev On Call.app"
 
 The installer builds and ad-hoc signs a menu-bar-only `.app`, installs it to `~/Applications`, and installs the companion CLI to `~/.local/bin/dev-on-call`.
 
-Open the menu-bar icon, choose **Settings**, and optionally enable **Launch at login**.
+Look for the **ON** badge in the menu bar. The app enables **Launch at login** on first run so the badge returns after a reboot; you can turn that off in **Settings** at any time.
+
+The release DMG is universal and supports both Apple Silicon and Intel Macs.
 
 ## Send an alert from any terminal
 
@@ -59,6 +79,20 @@ Severities are `info`, `warning`, and `critical`. Events are written to:
 ```text
 ~/Library/Application Support/DevOnCall/inbox/
 ```
+
+## Connect one repository
+
+Open **Settings → Connect**, choose a Git repository, and select **Install pre-commit alert**. You can optionally provide a test or lint command to run after its existing pre-commit hook. Dev On Call preserves and chains the active hook, keeps its original exit status, and only alerts when it fails.
+
+The same setup is available from any directory:
+
+```bash
+dev-on-call install --repo /path/to/repository --command 'npm test'
+dev-on-call status --repo /path/to/repository
+dev-on-call uninstall --repo /path/to/repository
+```
+
+If `core.hooksPath` points to a shared hooks directory, the wrapper stays shared but checks a repository-local opt-in before doing anything. Removing a connection disables only that repository.
 
 ## Shell probes
 
@@ -100,7 +134,7 @@ swift build --product DevOnCall
 swift build --product dev-on-call
 ```
 
-Create a distributable zip:
+Create distributable ZIP and DMG images:
 
 ```bash
 ./scripts/package-app.sh

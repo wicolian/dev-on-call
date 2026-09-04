@@ -291,9 +291,38 @@ private struct IntelligenceSettings: View {
 
 private struct IntegrationSettings: View {
     private let command = "dev-on-call alert --source ci --severity critical --title 'Tests failed' --body 'Open the latest run.'"
+    @State private var repoPath = ""
+    @State private var preCommitCommand = ""
+    @State private var repoMessage = ""
 
     var body: some View {
         Form {
+            Section("Install into a repository") {
+                HStack {
+                    TextField("Repository", text: $repoPath, prompt: Text("/path/to/repository"))
+                        .font(.system(.body, design: .monospaced))
+                    Button("Choose…", action: chooseRepository)
+                }
+                TextField("Optional command", text: $preCommitCommand, prompt: Text("npm test"))
+                    .font(.system(.body, design: .monospaced))
+                Text("Dev On Call safely chains the active pre-commit hook. If you provide a command, it runs after the existing hook. A failure keeps the commit blocked and adds an alert; successful commits stay quiet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Install pre-commit alert", action: installRepo)
+                        .buttonStyle(.borderedProminent)
+                    Button("Check status", action: checkRepo)
+                    Button("Remove", action: removeRepo)
+                    Spacer()
+                }
+                .disabled(repoPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if !repoMessage.isEmpty {
+                    Text(repoMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
             Section("Any terminal") {
                 Text("Send an event from scripts, hooks, CI watchers, or another agent:")
                 CodeBox(command)
@@ -312,6 +341,48 @@ private struct IntegrationSettings: View {
         }
         .formStyle(.grouped)
         .padding(.top, 8)
+    }
+
+    private func chooseRepository() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose the Git repository to connect to Dev On Call."
+        if panel.runModal() == .OK, let path = panel.url?.path { repoPath = path }
+    }
+
+    private func installRepo() {
+        do {
+            let command = preCommitCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+            let info = try RepoHookInstaller.install(at: repoPath, command: command)
+            repoPath = info.repository.path
+            repoMessage = "Installed. Failures will alert from \(info.hooksDirectory.path)."
+        } catch {
+            repoMessage = error.localizedDescription
+        }
+    }
+
+    private func checkRepo() {
+        do {
+            let info = try RepoHookInstaller.inspect(at: repoPath)
+            repoPath = info.repository.path
+            repoMessage = info.isEnabled && info.isWrapperInstalled
+                ? "Connected. \(info.preCommitCommand.isEmpty ? "Watching the existing hook." : "Running: \(info.preCommitCommand)")"
+                : "Not connected."
+        } catch {
+            repoMessage = error.localizedDescription
+        }
+    }
+
+    private func removeRepo() {
+        do {
+            let info = try RepoHookInstaller.uninstall(at: repoPath)
+            repoPath = info.repository.path
+            repoMessage = "Removed. Existing hook behavior was restored."
+        } catch {
+            repoMessage = error.localizedDescription
+        }
     }
 }
 

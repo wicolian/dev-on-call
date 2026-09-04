@@ -11,8 +11,9 @@ swift build -c release --product DevOnCall
 swift build -c release --product dev-on-call
 
 rm -rf "$BUILD_APP"
-mkdir -p "$BUILD_APP/Contents/MacOS" "$BUILD_APP/Contents/Resources"
+mkdir -p "$BUILD_APP/Contents/MacOS" "$BUILD_APP/Contents/Resources" "$BUILD_APP/Contents/Helpers"
 cp "$ROOT/.build/release/DevOnCall" "$BUILD_APP/Contents/MacOS/DevOnCall"
+cp "$ROOT/.build/release/dev-on-call" "$BUILD_APP/Contents/Helpers/dev-on-call"
 cp "$ROOT/Resources/Info.plist" "$BUILD_APP/Contents/Info.plist"
 codesign --force --deep --sign - "$BUILD_APP" >/dev/null
 

@@ -1,5 +1,13 @@
 # Integration recipes
 
+## Repository pre-commit
+
+```bash
+dev-on-call install --repo . --command 'npm test'
+```
+
+The command is optional. Without it, Dev On Call observes the repository's existing pre-commit hook. Existing hook code is moved to a reversible sibling backup and called first with its exit status preserved. Shared `core.hooksPath` setups use a repository-local opt-in so unrelated repositories remain unaffected.
+
 ## Generic command
 
 ```bash

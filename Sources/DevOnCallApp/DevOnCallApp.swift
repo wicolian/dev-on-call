@@ -10,7 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let isUITest = CommandLine.arguments.contains("--ui-test-window")
             || CommandLine.arguments.contains("--ui-test-settings")
         NSApp.setActivationPolicy(isUITest ? .regular : .accessory)
-        guard isUITest else { return }
+        guard isUITest else {
+            LaunchAtLoginController.enableByDefaultOnce()
+            return
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.showTestWindow()
@@ -60,7 +63,11 @@ struct DevOnCallApp: App {
         MenuBarExtra {
             MenuPanel(model: model)
         } label: {
-            Image(systemName: model.menuBarSymbol)
+            HStack(spacing: 3) {
+                Image(systemName: model.menuBarSymbol)
+                Text("ON")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
                 .accessibilityLabel("Dev On Call — \(model.monitoringLabel)")
         }
         .menuBarExtraStyle(.window)

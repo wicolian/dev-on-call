@@ -18,3 +18,5 @@ jobs:
         run: swift build -c release --product DevOnCall
       - name: Build companion CLI
         run: swift build -c release --product dev-on-call
+      - name: Validate installer scripts
+        run: bash -n scripts/install.sh scripts/install-local.sh scripts/package-app.sh
