@@ -1,4 +1,5 @@
 import Combine
+import DevOnCallAWS
 import DevOnCallCore
 import Foundation
 
@@ -13,6 +14,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastScanAt: Date?
     @Published var settingsMessage = ""
 
+    // AWS Boxes — mirrors the standalone AWS Boxes app's runtime state.
+    @Published private(set) var awsInstances: [Instance] = []
+    @Published private(set) var awsRegionErrors: [String: String] = [:]
+    @Published private(set) var awsClientError: String?
+    @Published private(set) var awsActionError: String?
+    @Published private(set) var awsIsRefreshing = false
+    @Published private(set) var awsLastRefreshed: Date?
+    @Published private(set) var awsActingInstanceIDs: Set<String> = []
+
     private let output = AlertOutputService()
     private var monitorTask: Task<Void, Never>?
     private var nextHerdrScan = Date.distantPast
@@ -24,6 +34,10 @@ final class AppModel: ObservableObject {
     private var deduplication: [String: Date] = [:]
     private var probeLastSuccess: [UUID: Bool] = [:]
     private var hasBaselinedHerdr = false
+
+    private var nextAWSScan = Date.distantPast
+    private var awsDidResolveProfile = false
+    private var awsLongRunningAlerted: Set<String> = []
 
     private static let preferencesKey = "DevOnCall.preferences.v1"
 
@@ -61,6 +75,143 @@ final class AppModel: ObservableObject {
             return "Snoozed until \(until.formatted(date: .omitted, time: .shortened))"
         }
         return "On watch"
+    }
+
+    // MARK: - AWS Boxes
+
+    var awsRunningCount: Int {
+        awsInstances.filter { $0.state == .running }.count
+    }
+
+    var awsEffectiveRegions: [String] {
+        preferences.awsRegions.isEmpty ? AWSBoxesDefaults.regions : preferences.awsRegions
+    }
+
+    /// Instances grouped by region, each group sorted (running first, then
+    /// launch time), regions sorted alphabetically. Never filters an
+    /// instance out — every decoded instance from every region is included.
+    var awsGroupedInstances: [(region: String, instances: [Instance])] {
+        let groups = Dictionary(grouping: awsInstances, by: \.region)
+        return groups.keys.sorted().map { region in
+            (region: region, instances: (groups[region] ?? []).sortedForDisplay())
+        }
+    }
+
+    var awsErrorSummary: String? {
+        if let awsClientError { return awsClientError }
+        if let awsActionError { return awsActionError }
+        if !awsRegionErrors.isEmpty {
+            return awsRegionErrors
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+                .joined(separator: " · ")
+        }
+        return nil
+    }
+
+    var menuBarAccessibilityLabel: String {
+        var label = "Dev On Call — \(monitoringLabel)"
+        if preferences.awsBoxesEnabled {
+            label += ", \(awsRunningCount) AWS box\(awsRunningCount == 1 ? "" : "es") running"
+        }
+        return label
+    }
+
+    func refreshAWSBoxesNow() {
+        nextAWSScan = .distantPast
+        Task { [weak self] in await self?.scanAWSBoxes() }
+    }
+
+    func awsStop(_ instance: Instance) {
+        performAWSAction(instance) {
+            try await AWSClient.stopInstance(id: instance.id, region: instance.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    func awsStart(_ instance: Instance) {
+        performAWSAction(instance) {
+            try await AWSClient.startInstance(id: instance.id, region: instance.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    func awsTerminate(_ instance: Instance) {
+        performAWSAction(instance) {
+            try await AWSClient.terminateInstance(id: instance.id, region: instance.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    private func performAWSAction(_ instance: Instance, _ action: @escaping () async throws -> Void) {
+        guard !awsActingInstanceIDs.contains(instance.id) else { return }
+        awsActingInstanceIDs.insert(instance.id)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+                self.awsActionError = nil
+            } catch {
+                self.awsActionError = error.localizedDescription
+            }
+            await self.scanAWSBoxes()
+            self.awsActingInstanceIDs.remove(instance.id)
+        }
+    }
+
+    private func scanAWSBoxes() async {
+        guard preferences.awsBoxesEnabled else { return }
+
+        guard AWSClient.resolveBinaryPath() != nil else {
+            awsClientError = "aws CLI not found at /opt/homebrew/bin/aws or /usr/local/bin/aws"
+            return
+        }
+        awsClientError = nil
+
+        if !awsDidResolveProfile {
+            awsDidResolveProfile = true
+            if preferences.awsProfile == "sako" {
+                let sakoWorks = await AWSClient.checkIdentity(profile: "sako")
+                if !sakoWorks, await AWSClient.checkIdentity(profile: "keladev") {
+                    preferences.awsProfile = "keladev"
+                }
+            }
+        }
+
+        awsIsRefreshing = true
+        let profile = preferences.awsProfile
+        let regions = awsEffectiveRegions
+        let (fetched, errors) = await AWSClient.describeAllInstances(profile: profile, regions: regions)
+        awsInstances = fetched
+        awsRegionErrors = errors
+        awsLastRefreshed = Date()
+        awsIsRefreshing = false
+
+        checkAWSLongRunningAlerts()
+    }
+
+    private func checkAWSLongRunningAlerts() {
+        guard preferences.awsBoxesEnabled, preferences.awsLongRunningAlertEnabled else { return }
+        let thresholdHours = Double(max(1, preferences.awsLongRunningAlertHours))
+
+        // Stop tracking instances that are no longer running long — if the
+        // box is later stopped and started again, or a new box reuses an id
+        // (it won't, but just in case), it can alert again.
+        let stillOverThreshold = Set(
+            awsInstances
+                .filter { $0.isLongRunning(thresholdHours: thresholdHours) }
+                .map(\.id)
+        )
+        awsLongRunningAlerted.formIntersection(stillOverThreshold)
+
+        for instance in awsInstances where instance.isLongRunning(thresholdHours: thresholdHours) {
+            guard !awsLongRunningAlerted.contains(instance.id) else { continue }
+            awsLongRunningAlerted.insert(instance.id)
+            let hours = Int((instance.uptime() ?? 0) / 3600)
+            ingest(AlertEvent(
+                severity: .warning,
+                source: "AWS Boxes · \(instance.region)",
+                title: "EC2 box running long",
+                detail: "\(instance.displayName) running \(hours)h"
+            ))
+        }
     }
 
     func startMonitoring() {
@@ -162,6 +313,12 @@ final class AppModel: ObservableObject {
         }
 
         await runDueProbes()
+
+        if preferences.awsBoxesEnabled, Date() >= nextAWSScan {
+            nextAWSScan = Date().addingTimeInterval(60)
+            await scanAWSBoxes()
+        }
+
         lastScanAt = Date()
     }
 
