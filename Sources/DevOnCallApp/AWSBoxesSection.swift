@@ -64,8 +64,8 @@ struct AWSBoxesSection: View {
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .tracking(0.7)
                     .foregroundStyle(.secondary)
-                if model.awsRunningCount > 0 {
-                    Text("\(model.awsRunningCount) running")
+                if model.awsRunningResourceCount > 0 {
+                    Text("\(model.awsRunningResourceCount) running")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
@@ -111,19 +111,32 @@ struct AWSBoxesSection: View {
     private var content: some View {
         if model.awsProfileMissing {
             setupCard
-        } else if model.awsInstances.isEmpty, !model.awsIsRefreshing, model.awsErrorSummary == nil {
+        } else if !model.awsHasAnyResources, !model.awsIsRefreshing, model.awsErrorSummary == nil {
             emptyState
-        } else if model.awsInstances.isEmpty, !model.awsIsRefreshing {
+        } else if !model.awsHasAnyResources, !model.awsIsRefreshing {
             // Errors present and nothing decoded — the error banner above
             // already explains why; keep this compact.
             EmptyView()
-        } else if model.awsOnlyMine, model.awsGroupedInstances.isEmpty, !model.awsIsRefreshing {
+        } else if model.awsOnlyMine, !model.awsHasVisibleResources, !model.awsIsRefreshing {
             onlyMineEmptyState
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(model.awsGroupedInstances, id: \.region) { group in
                         regionSection(group)
+                    }
+                    // Desktops sit under the servers. The group label carries
+                    // the kind as well as the region rather than nesting a
+                    // second level of headers — same visual weight, one more
+                    // word, no extra depth.
+                    ForEach(Array(model.awsGroupedWorkspaces.enumerated()), id: \.element.region) { index, group in
+                        if index == 0, !model.awsGroupedInstances.isEmpty {
+                            Rectangle()
+                                .fill(WatchPalette.border)
+                                .frame(height: 0.5)
+                                .padding(.vertical, 1)
+                        }
+                        workspaceRegionSection(group)
                     }
                 }
                 .padding(.vertical, 1)
@@ -138,7 +151,7 @@ struct AWSBoxesSection: View {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 18, weight: .light))
                 .foregroundStyle(WatchPalette.healthy)
-            Text("No EC2 instances in the configured regions")
+            Text("No EC2 instances or WorkSpaces in the configured regions")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -152,7 +165,7 @@ struct AWSBoxesSection: View {
             Image(systemName: "person.crop.circle.badge.checkmark")
                 .font(.system(size: 18, weight: .light))
                 .foregroundStyle(.secondary)
-            Text("None of the visible boxes are tagged to you")
+            Text("None of the visible boxes or desktops are yours")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -221,6 +234,25 @@ struct AWSBoxesSection: View {
             VStack(spacing: 6) {
                 ForEach(group.instances) { instance in
                     AWSInstanceRow(model: model, instance: instance)
+                }
+            }
+        }
+    }
+
+    private func workspaceRegionSection(_ group: (region: String, workspaces: [Workspace])) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("WORKSPACES · \(group.region.uppercased())")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .tracking(0.5)
+                    .foregroundStyle(.secondary)
+                Text("\(group.workspaces.count)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            VStack(spacing: 6) {
+                ForEach(group.workspaces) { workspace in
+                    AWSWorkspaceRow(model: model, workspace: workspace)
                 }
             }
         }
@@ -328,6 +360,159 @@ private struct AWSInstanceRow: View {
                     .disabled(instance.state != .stopped)
                 Divider()
                 Button("Terminate…", role: .destructive) { showTerminateConfirm = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 18, height: 18)
+        }
+    }
+}
+
+/// A WorkSpace row is deliberately the same object as an instance row —
+/// same rail, same inset card, same type scale — because a desktop and a
+/// box are both "a thing of mine that is costing money right now", and two
+/// visual languages for one question would be a lie about the product.
+///
+/// What changes is what the two slots say, and that difference is the whole
+/// point of the row:
+///   - the trailing mono tag carries the cost mode with its budget
+///     ("AUTO-STOP 60M") where an instance shows SPOT / ON-DEMAND. For a
+///     desktop, how it parks itself *is* the purchase decision.
+///   - the meta line ends in human presence ("Idle 3h 12m") where an
+///     instance ends in machine uptime. An always-on desktop has been up
+///     forever by definition; the number that means anything is when
+///     somebody last sat at it.
+private struct AWSWorkspaceRow: View {
+    @ObservedObject var model: AppModel
+    let workspace: Workspace
+
+    private var isActing: Bool { model.awsActingWorkspaceIDs.contains(workspace.id) }
+    private var isResting: Bool { workspace.state.health == .resting }
+    private var isWastefullyIdle: Bool {
+        workspace.isWastefullyIdle(thresholdHours: Double(max(1, model.preferences.awsLongRunningAlertHours)))
+    }
+
+    /// Same palette as everything else in the app, and no new hue: green
+    /// only for a healthy available desktop, the existing warning orange for
+    /// both "mid-transition" and "always-on and forgotten", the existing red
+    /// for a broken desktop, and a neutral tone for anything parked.
+    private var railColor: Color {
+        switch workspace.state.health {
+        case .available:
+            return isWastefullyIdle ? WatchPalette.warning : WatchPalette.healthy
+        case .transitioning:
+            return WatchPalette.warning
+        case .faulted:
+            return WatchPalette.critical
+        case .resting:
+            return Color.secondary.opacity(0.35)
+        }
+    }
+
+    private var metaColor: Color {
+        if workspace.state.health == .faulted { return WatchPalette.critical }
+        if isWastefullyIdle { return WatchPalette.warning }
+        return .secondary
+    }
+
+    /// The user name is dropped when the "YOU" badge is already saying it —
+    /// repeating your own name back at you spends a scarce line on nothing.
+    private var metaText: String {
+        var parts: [String] = []
+        if !model.isMine(workspace), let user = workspace.userName, !user.isEmpty {
+            parts.append(user)
+        }
+        parts.append(workspace.computeLabel)
+        parts.append(workspace.state.label)
+        let presence = workspace.presenceString()
+        if presence != "-" { parts.append(presence) }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(railColor)
+                .frame(width: 3)
+                .padding(.vertical, 7)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(workspace.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if model.isMine(workspace) {
+                        Text("YOU")
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .tracking(0.3)
+                            .foregroundStyle(WatchPalette.healthy)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(WatchPalette.healthy.opacity(0.16))
+                            .clipShape(Capsule())
+                    }
+                    Spacer(minLength: 6)
+                    Text(workspace.runningMode.tag)
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .fixedSize()
+                    actionControl
+                }
+                Text(metaText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(metaColor)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .background(WatchPalette.inset)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(WatchPalette.borderSoft, lineWidth: 0.5)
+        }
+        .opacity(isResting ? 0.55 : 1)
+        .help(tooltipText)
+    }
+
+    private var tooltipText: String {
+        var parts: [String] = []
+        if let user = workspace.userName, !user.isEmpty { parts.append("User: \(user)") }
+        if let os = workspace.operatingSystemName, !os.isEmpty {
+            parts.append(os.replacingOccurrences(of: "_", with: " ").capitalized)
+        }
+        if let error = workspace.errorMessage, !error.isEmpty { parts.append(error) }
+        parts.append(workspace.id)
+        return parts.joined(separator: " · ")
+    }
+
+    /// Start / Stop / Reboot only. Rebuild and Terminate wipe or destroy
+    /// somebody's desktop and its local state, which is not a thing to put
+    /// one click away in a menu-bar popover. Reboot sits under a divider
+    /// because it interrupts whoever is connected.
+    @ViewBuilder
+    private var actionControl: some View {
+        if isActing {
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 16, height: 16)
+        } else {
+            Menu {
+                Button("Start") { model.awsStartWorkspace(workspace) }
+                    .disabled(!workspace.canStart)
+                Button("Stop") { model.awsStopWorkspace(workspace) }
+                    .disabled(!workspace.canStop)
+                Divider()
+                Button("Reboot") { model.awsRebootWorkspace(workspace) }
+                    .disabled(!workspace.canReboot)
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 12.5))

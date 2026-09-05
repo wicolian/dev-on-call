@@ -120,6 +120,10 @@ If you're on the team and just want to keep an eye on our shared AWS account's E
 
 ![AWS Boxes row menu](docs/screenshots/aws-boxes-row-menu.png)
 
+### WorkSpaces
+
+Underneath the EC2 groups, any region that has Amazon WorkSpaces desktops gets its own **WORKSPACES · REGION** group, listing one row per desktop in the same shape as a box row: its computer name (or its WorkSpace id while AWS is still building it and hasn't assigned one), the assigned user, the bundle's compute type (`g6f.2xlarge, GPU` for a graphics bundle), the state as the same coloured rail — green available, gray stopped, orange starting/stopping/pending/rebooting, red unhealthy — and, in the slot where a box shows uptime, when a human last connected. Two things read differently on purpose: the trailing tag carries the running mode with its budget (`AUTO-STOP 60M` or `ALWAYS-ON`) rather than spot/on-demand, because for a desktop that *is* the cost decision; and presence replaces uptime, because an always-on desktop has been up since the day it was made and the only number that means anything is when somebody last sat at it. The **YOU** badge and the **Only mine** switch work exactly as they do for boxes, matching the WorkSpace's assigned user against your own IAM username. The row's **···** menu offers **Start** when it's stopped and **Stop** / **Reboot** when it's available — Rebuild and Terminate are deliberately not offered anywhere in the app, since both wipe somebody's desktop. WorkSpaces is not sold in every region the box list covers (`ap-south-2` and `eu-north-1` have no WorkSpaces endpoint at all); those regions are skipped quietly rather than parking a permanent error banner over a working section.
+
 ### How to enable it
 
 1. Open **Settings → AWS** and turn on **Show AWS boxes**.
@@ -137,7 +141,7 @@ If you haven't run `aws configure --profile sako` yet, the AWS Boxes section sho
 - A CLI error (an expired SSO session, a missing `aws` binary) shows inline instead of crashing or hanging the app.
 - The menu-bar label shows the running-instance count as a plain number next to the status glyph.
 
-**Long-running alert:** optionally, the first time a running box crosses the configured hour limit, Dev On Call raises one warning straight into the same signal rail as every other alert (e.g. "EC2 box koushik-sandbox running 14h") — deduplicated the same way, through the same inbox path, not a second alerting system.
+**Long-running alert:** optionally, the first time a running box crosses the configured hour limit, Dev On Call raises one warning straight into the same signal rail as every other alert (e.g. "EC2 box koushik-sandbox running 14h") — deduplicated the same way, through the same inbox path, not a second alerting system. An `AUTO_STOP` WorkSpace is never alerted however long it sits, because it parks itself and stops billing; an `ALWAYS_ON` WorkSpace nobody has connected to for longer than the same hour limit raises the same warning, since that is the only measurable waste on a desktop that is up by definition.
 
 Like the rest of the app, this shells out to the `aws` CLI (`--output json`, no SDK) using whatever credentials/profile resolution the CLI already has configured. Dev On Call never reads or stores AWS credentials.
 

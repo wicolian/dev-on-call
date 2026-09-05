@@ -184,6 +184,164 @@ do {
     print("FAIL  EC2 instance decode threw \(error)")
 }
 
+// AWS Boxes: WorkSpaces decoding. The first entry is a verbatim capture of
+// `aws workspaces describe-workspaces --region ap-south-1` for Koushik's
+// music desktop while it was still building (no ComputerName yet), so the
+// PENDING/no-name case is covered by real data rather than a guess. The
+// other two are hand-written in the same shape to cover an ALWAYS_ON
+// desktop and a broken one.
+let sampleDescribeWorkspacesJSON = """
+{
+  "Workspaces": [
+    {
+      "WorkspaceId": "ws-f8g0stl4z",
+      "DirectoryId": "d-9f6759e579",
+      "UserName": "koushik",
+      "State": "PENDING",
+      "BundleId": "wsb-xyv83v8b5",
+      "WorkspaceProperties": {
+        "RunningMode": "AUTO_STOP",
+        "RunningModeAutoStopTimeoutInMinutes": 60,
+        "RootVolumeSizeGib": 175,
+        "ComputeTypeName": "GRAPHICS_G4DN",
+        "Protocols": ["WSP"],
+        "OperatingSystemName": "WINDOWS_SERVER_2022",
+        "GlobalAccelerator": { "Mode": "INHERITED", "PreferredProtocol": "INHERITED" },
+        "NestedVirtualizationEnabled": false
+      },
+      "ModificationStates": []
+    },
+    {
+      "WorkspaceId": "ws-alwayson01",
+      "UserName": "priya",
+      "ComputerName": "PRIYA-DESK",
+      "State": "AVAILABLE",
+      "BundleId": "wsb-standard1",
+      "WorkspaceProperties": {
+        "RunningMode": "ALWAYS_ON",
+        "ComputeTypeName": "STANDARD",
+        "OperatingSystemName": "WINDOWS_SERVER_2022"
+      }
+    },
+    {
+      "WorkspaceId": "ws-broken0001",
+      "UserName": "koushik",
+      "ComputerName": "OLD-BOX",
+      "State": "UNHEALTHY",
+      "ErrorMessage": "The WorkSpace failed a health check.",
+      "WorkspaceProperties": {
+        "RunningMode": "AUTO_STOP",
+        "RunningModeAutoStopTimeoutInMinutes": 60,
+        "ComputeTypeName": "GRAPHICS_G6F_2XLARGE"
+      }
+    }
+  ]
+}
+""".data(using: .utf8)!
+
+let sampleConnectionStatusJSON = """
+{
+  "WorkspacesConnectionStatus": [
+    {
+      "WorkspaceId": "ws-alwayson01",
+      "ConnectionState": "DISCONNECTED",
+      "ConnectionStateCheckTimestamp": "2020-06-01T00:00:00.000000+05:30",
+      "LastKnownUserConnectionTimestamp": "2020-01-01T00:00:00.000000+05:30"
+    }
+  ]
+}
+""".data(using: .utf8)!
+
+do {
+    let connections = try JSONDecoder()
+        .decode(WorkspacesConnectionStatusResponse.self, from: sampleConnectionStatusJSON)
+        .byWorkspaceID()
+    expect(connections.count == 1, "connection status decodes and indexes by WorkSpace id")
+
+    let decoded = try JSONDecoder().decode(WorkspacesDescribeResponse.self, from: sampleDescribeWorkspacesJSON)
+    let workspaces = decoded.toWorkspaces(region: "ap-south-1", connections: connections)
+    expect(workspaces.count == 3, "every WorkSpace decodes — none silently dropped")
+
+    let music = workspaces.first { $0.id == "ws-f8g0stl4z" }
+    expect(music?.userName == "koushik", "the assigned user name decodes")
+    expect(music?.displayName == "ws-f8g0stl4z", "a WorkSpace with no ComputerName yet falls back to its id")
+    expect(music?.state == .pending, "PENDING decodes as a known state, not unknown")
+    expect(music?.state.health == .transitioning, "PENDING reads as mid-transition, not broken")
+    expect(music?.computeLabel == "g4dn, GPU", "a GRAPHICS_ compute type shows its GPU family")
+    expect(music?.isGPU == true, "a GRAPHICS_ compute type is flagged as a GPU desktop")
+    expect(music?.runningMode.tag == "AUTO-STOP 60M", "auto-stop carries its timeout budget in the tag")
+    expect(music?.presenceString() == "-", "a WorkSpace with no connection record claims nothing about presence")
+    expect(music?.canStart == false && music?.canStop == false && music?.canReboot == false,
+           "a PENDING WorkSpace offers no actions")
+
+    let alwaysOn = workspaces.first { $0.id == "ws-alwayson01" }
+    expect(alwaysOn?.displayName == "PRIYA-DESK", "ComputerName wins over the id when present")
+    expect(alwaysOn?.state.health == .available, "AVAILABLE reads as available")
+    expect(alwaysOn?.computeLabel == "Standard", "a non-GPU compute type reads as a plain name")
+    expect(alwaysOn?.runningMode.tag == "ALWAYS-ON", "always-on has no timeout to show")
+    expect(alwaysOn?.presenceString().hasPrefix("Idle ") == true, "a disconnected WorkSpace reports idle time")
+    expect(alwaysOn?.isWastefullyIdle(thresholdHours: 12) == true,
+           "an always-on desktop nobody has connected to since 2020 is flagged")
+    expect(alwaysOn?.canStop == true && alwaysOn?.canReboot == true && alwaysOn?.canStart == false,
+           "an available WorkSpace offers Stop and Reboot but not Start")
+
+    let broken = workspaces.first { $0.id == "ws-broken0001" }
+    expect(broken?.state.health == .faulted, "UNHEALTHY reads as broken")
+    expect(broken?.computeLabel == "g6f.2xlarge, GPU", "a multi-segment GPU family keeps its size")
+    expect(broken?.errorMessage?.isEmpty == false, "a WorkSpace error message is kept for the tooltip")
+    expect(broken?.isWastefullyIdle(thresholdHours: 1) == false,
+           "an auto-stop WorkSpace is never flagged as wasteful, however long it sits")
+
+    expect(music?.isOwned(by: "koushik") == true, "a WorkSpace assigned to you matches the derived identity")
+    expect(alwaysOn?.isOwned(by: "koushik") == false, "somebody else's WorkSpace is not yours")
+    expect(music?.isOwned(by: nil) == false, "with no known identity nothing is claimed as yours")
+
+    let sorted = workspaces.sortedForDisplay()
+    expect(sorted.count == 3, "sortedForDisplay never drops a WorkSpace")
+    expect(sorted.first?.id == "ws-alwayson01", "available WorkSpaces sort first")
+    expect(sorted[1].id == "ws-broken0001", "a broken WorkSpace sorts above a transitional one, not below")
+} catch {
+    failures += 1
+    print("FAIL  WorkSpaces decode threw \(error)")
+}
+
+// AWS Boxes: a region with no WorkSpaces at all returns an empty list, and
+// some regions in the EC2 list (ap-south-2, eu-north-1) have no WorkSpaces
+// endpoint whatsoever — neither may look like a decode failure.
+do {
+    let empty = try JSONDecoder().decode(
+        WorkspacesDescribeResponse.self,
+        from: #"{"Workspaces": []}"#.data(using: .utf8)!
+    )
+    expect(empty.toWorkspaces(region: "us-east-1").isEmpty, "a region with no WorkSpaces decodes to an empty list")
+
+    let missingKey = try JSONDecoder().decode(
+        WorkspacesDescribeResponse.self,
+        from: #"{"NextToken": "abc"}"#.data(using: .utf8)!
+    )
+    expect(missingKey.workspaces.isEmpty, "a response with no Workspaces key at all still decodes")
+} catch {
+    failures += 1
+    print("FAIL  empty WorkSpaces response decode threw \(error)")
+}
+
+expect(
+    Workspace.formatComputeType("GRAPHICSPRO_G4DN") == "g4dn, GPU",
+    "a GRAPHICSPRO bundle reports the same GPU family"
+)
+expect(
+    Workspace.formatComputeType("GENERALPURPOSE_4XLARGE") == "Generalpurpose.4xlarge",
+    "a multi-segment non-GPU compute type keeps every segment"
+)
+expect(
+    Workspace.formatComputeType(nil) == "unknown",
+    "a missing compute type degrades to a word, not a crash or an empty slot"
+)
+expect(
+    WorkspaceState(raw: "SOME_FUTURE_STATE").label == "Some Future State",
+    "an unrecognised future state stays readable instead of decoding as an error"
+)
+
 // AWS Boxes: "mine" awareness — deriving a username from a caller-identity
 // ARN, and matching it against an instance's Owner tag.
 expect(

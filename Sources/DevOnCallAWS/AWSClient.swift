@@ -269,4 +269,173 @@ public struct AWSClient {
     public static func terminateInstance(id: String, region: String, profile: String) async throws {
         try await run(["ec2", "terminate-instances", "--instance-ids", id, "--region", region, "--profile", profile, "--output", "json"])
     }
+
+    // MARK: - WorkSpaces
+    //
+    // Same shell-out, same timeout wrapper, same region fan-out as the EC2
+    // calls above. Two describes per region: the WorkSpaces themselves, plus
+    // connection status for "when did a human last sit at this desktop".
+    // The compute type comes off WorkspaceProperties, so no bundle lookup
+    // (and no bundle-name cache) is needed. Rebuild and Terminate are
+    // deliberately absent — this app never offers a destructive action on
+    // somebody's desktop.
+
+    /// Fetches WorkSpaces for a single region, with connection status
+    /// merged in. A failing/denied connection-status call degrades to "no
+    /// presence info" rather than failing the whole region — the desktop
+    /// list is the thing that matters.
+    public static func describeWorkspaces(profile: String, region: String) async throws -> [Workspace] {
+        let data = try await run([
+            "workspaces", "describe-workspaces",
+            "--profile", profile,
+            "--region", region,
+            "--output", "json"
+        ])
+        let decoded = try JSONDecoder().decode(WorkspacesDescribeResponse.self, from: data)
+        guard !decoded.workspaces.isEmpty else { return [] }
+
+        let connections = await describeWorkspacesConnectionStatus(profile: profile, region: region)
+        return decoded.toWorkspaces(region: region, connections: connections)
+    }
+
+    /// Best-effort presence lookup. Returns an empty map on any failure.
+    static func describeWorkspacesConnectionStatus(
+        profile: String,
+        region: String
+    ) async -> [String: WorkspaceConnection] {
+        guard let data = try? await run([
+            "workspaces", "describe-workspaces-connection-status",
+            "--profile", profile,
+            "--region", region,
+            "--output", "json"
+        ], timeout: 15) else { return [:] }
+        guard let decoded = try? JSONDecoder().decode(WorkspacesConnectionStatusResponse.self, from: data) else {
+            return [:]
+        }
+        return decoded.byWorkspaceID()
+    }
+
+    /// WorkSpaces isn't offered in every region the EC2 list covers — as of
+    /// writing, ap-south-2 and eu-north-1 have no `workspaces.` endpoint at
+    /// all, so the CLI fails to resolve it. That is a fact about the region,
+    /// not a problem to report, and surfacing it would park a permanent
+    /// error banner over a working section. Such regions are skipped
+    /// silently; a genuine network outage still shows up, because the EC2
+    /// calls for the same regions fail too and those errors are reported.
+    static func isRegionWithoutWorkspacesEndpoint(_ error: Error) -> Bool {
+        let text = error.localizedDescription.lowercased()
+        return text.contains("could not connect to the endpoint url")
+            || text.contains("endpoint url")
+            && text.contains("workspaces.")
+    }
+
+    /// Fetches WorkSpaces across every region in parallel.
+    public static func describeAllWorkspaces(
+        profile: String,
+        regions: [String]
+    ) async -> (workspaces: [Workspace], errors: [String: String]) {
+        await withTaskGroup(of: (String, Result<[Workspace], Error>).self) { group in
+            for region in regions {
+                group.addTask {
+                    do {
+                        let workspaces = try await describeWorkspaces(profile: profile, region: region)
+                        return (region, .success(workspaces))
+                    } catch {
+                        return (region, .failure(error))
+                    }
+                }
+            }
+
+            var allWorkspaces: [Workspace] = []
+            var errors: [String: String] = [:]
+            for await (region, result) in group {
+                switch result {
+                case .success(let workspaces):
+                    allWorkspaces.append(contentsOf: workspaces)
+                case .failure(let error):
+                    guard !isRegionWithoutWorkspacesEndpoint(error) else { continue }
+                    errors[region] = error.localizedDescription
+                }
+            }
+            return (allWorkspaces, errors)
+        }
+    }
+
+    /// Start/Stop/RebootWorkspaces are batch APIs: they exit 0 and report
+    /// per-WorkSpace problems inside a `FailedRequests` array instead of on
+    /// stderr. Treating exit 0 as success would silently swallow "you don't
+    /// have permission" or "this WorkSpace isn't stopped", so the body is
+    /// decoded and any failure is raised as a normal error.
+    public struct WorkspaceRequestFailure: Error, LocalizedError, Decodable {
+        let workspaceId: String?
+        let errorCode: String?
+        let errorMessage: String?
+
+        enum CodingKeys: String, CodingKey {
+            case workspaceId = "WorkspaceId"
+            case errorCode = "ErrorCode"
+            case errorMessage = "ErrorMessage"
+        }
+
+        public var errorDescription: String? {
+            let message = (errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            if let message { return message }
+            if let errorCode, !errorCode.isEmpty { return errorCode }
+            return "WorkSpace request failed for \(workspaceId ?? "unknown WorkSpace")"
+        }
+    }
+
+    private struct WorkspaceBatchResponse: Decodable {
+        var failedRequests: [WorkspaceRequestFailure]
+
+        enum CodingKeys: String, CodingKey {
+            case failedRequests = "FailedRequests"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            failedRequests = try container.decodeIfPresent([WorkspaceRequestFailure].self, forKey: .failedRequests) ?? []
+        }
+    }
+
+    private static func runWorkspaceBatch(
+        _ subcommand: String,
+        requestsFlag: String,
+        id: String,
+        region: String,
+        profile: String
+    ) async throws {
+        let data = try await run([
+            "workspaces", subcommand,
+            requestsFlag, "WorkspaceId=\(id)",
+            "--region", region, "--profile", profile, "--output", "json"
+        ])
+        // An empty body is a success — nothing failed.
+        guard !data.isEmpty,
+              let decoded = try? JSONDecoder().decode(WorkspaceBatchResponse.self, from: data),
+              let failure = decoded.failedRequests.first
+        else { return }
+        throw failure
+    }
+
+    public static func startWorkspace(id: String, region: String, profile: String) async throws {
+        try await runWorkspaceBatch(
+            "start-workspaces", requestsFlag: "--start-workspace-requests",
+            id: id, region: region, profile: profile
+        )
+    }
+
+    public static func stopWorkspace(id: String, region: String, profile: String) async throws {
+        try await runWorkspaceBatch(
+            "stop-workspaces", requestsFlag: "--stop-workspace-requests",
+            id: id, region: region, profile: profile
+        )
+    }
+
+    public static func rebootWorkspace(id: String, region: String, profile: String) async throws {
+        try await runWorkspaceBatch(
+            "reboot-workspaces", requestsFlag: "--reboot-workspace-requests",
+            id: id, region: region, profile: profile
+        )
+    }
 }

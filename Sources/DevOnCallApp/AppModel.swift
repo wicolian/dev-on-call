@@ -23,6 +23,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var awsLastRefreshed: Date?
     @Published private(set) var awsActingInstanceIDs: Set<String> = []
 
+    /// WorkSpaces — Koushik's desktop lives here rather than on EC2. Kept in
+    /// its own list (not merged into `awsInstances`) because a desktop and a
+    /// server answer different questions: presence vs uptime, running mode
+    /// vs spot/on-demand, and no destructive action is ever offered.
+    @Published private(set) var awsWorkspaces: [Workspace] = []
+    @Published private(set) var awsWorkspaceRegionErrors: [String: String] = [:]
+    @Published private(set) var awsActingWorkspaceIDs: Set<String> = []
+
     /// True when the configured profile (default "sako") has no section at
     /// all in the local AWS config/credentials files — the "a colleague
     /// hasn't run `aws configure` yet" case, shown as a setup card instead
@@ -54,6 +62,7 @@ final class AppModel: ObservableObject {
     private var nextAWSScan = Date.distantPast
     private var awsDidResolveProfile = false
     private var awsLongRunningAlerted: Set<String> = []
+    private var awsIdleWorkspaceAlerted: Set<String> = []
     private var awsIdentityProfile: String?
     private var didDetectAWSDefaultRegions = false
 
@@ -118,15 +127,52 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// WorkSpaces grouped by region, same shape and same "Only mine" rule as
+    /// `awsGroupedInstances`. Regions with no WorkSpaces never appear.
+    var awsGroupedWorkspaces: [(region: String, workspaces: [Workspace])] {
+        let base = awsOnlyMine ? awsWorkspaces.filter { isMine($0) } : awsWorkspaces
+        let groups = Dictionary(grouping: base, by: \.region)
+        return groups.keys.sorted().map { region in
+            (region: region, workspaces: (groups[region] ?? []).sortedForDisplay())
+        }
+    }
+
+    /// Available WorkSpaces are billing right now exactly like a running
+    /// box, so the section header counts them together.
+    var awsAvailableWorkspaceCount: Int {
+        awsWorkspaces.filter { $0.state.health == .available }.count
+    }
+
+    var awsRunningResourceCount: Int {
+        awsRunningCount + awsAvailableWorkspaceCount
+    }
+
+    var awsHasAnyResources: Bool {
+        !awsInstances.isEmpty || !awsWorkspaces.isEmpty
+    }
+
+    var awsHasVisibleResources: Bool {
+        !awsGroupedInstances.isEmpty || !awsGroupedWorkspaces.isEmpty
+    }
+
     func isMine(_ instance: Instance) -> Bool {
         instance.isOwned(by: awsCurrentUserName)
+    }
+
+    func isMine(_ workspace: Workspace) -> Bool {
+        workspace.isOwned(by: awsCurrentUserName)
     }
 
     var awsErrorSummary: String? {
         if let awsClientError { return awsClientError }
         if let awsActionError { return awsActionError }
-        if !awsRegionErrors.isEmpty {
-            return awsRegionErrors
+        // WorkSpaces isn't enabled in every region of the list, so a region
+        // that has EC2 boxes but no WorkSpaces directory would otherwise
+        // spam the banner. Only report a WorkSpaces region error when that
+        // region isn't already failing for EC2.
+        let merged = awsRegionErrors.merging(awsWorkspaceRegionErrors) { ec2, _ in ec2 }
+        if !merged.isEmpty {
+            return merged
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key): \($0.value)" }
                 .joined(separator: " · ")
@@ -137,7 +183,8 @@ final class AppModel: ObservableObject {
     var menuBarAccessibilityLabel: String {
         var label = "Dev On Call — \(monitoringLabel)"
         if preferences.awsBoxesEnabled {
-            label += ", \(awsRunningCount) AWS box\(awsRunningCount == 1 ? "" : "es") running"
+            let count = awsRunningResourceCount
+            label += ", \(count) AWS box\(count == 1 ? "" : "es") running"
         }
         return label
     }
@@ -162,6 +209,44 @@ final class AppModel: ObservableObject {
     func awsTerminate(_ instance: Instance) {
         performAWSAction(instance) {
             try await AWSClient.terminateInstance(id: instance.id, region: instance.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    // WorkSpaces actions. Start/Stop/Reboot only — Rebuild and Terminate
+    // wipe or destroy somebody's desktop and have no place behind a
+    // one-click menu-bar menu.
+
+    func awsStartWorkspace(_ workspace: Workspace) {
+        performAWSWorkspaceAction(workspace) {
+            try await AWSClient.startWorkspace(id: workspace.id, region: workspace.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    func awsStopWorkspace(_ workspace: Workspace) {
+        performAWSWorkspaceAction(workspace) {
+            try await AWSClient.stopWorkspace(id: workspace.id, region: workspace.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    func awsRebootWorkspace(_ workspace: Workspace) {
+        performAWSWorkspaceAction(workspace) {
+            try await AWSClient.rebootWorkspace(id: workspace.id, region: workspace.region, profile: self.preferences.awsProfile)
+        }
+    }
+
+    private func performAWSWorkspaceAction(_ workspace: Workspace, _ action: @escaping () async throws -> Void) {
+        guard !awsActingWorkspaceIDs.contains(workspace.id) else { return }
+        awsActingWorkspaceIDs.insert(workspace.id)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+                self.awsActionError = nil
+            } catch {
+                self.awsActionError = error.localizedDescription
+            }
+            await self.scanAWSBoxes()
+            self.awsActingWorkspaceIDs.remove(workspace.id)
         }
     }
 
@@ -199,6 +284,8 @@ final class AppModel: ObservableObject {
             awsClientError = nil
             awsInstances = []
             awsRegionErrors = [:]
+            awsWorkspaces = []
+            awsWorkspaceRegionErrors = [:]
             return
         }
         awsClientError = nil
@@ -218,13 +305,22 @@ final class AppModel: ObservableObject {
         awsIsRefreshing = true
         let profile = preferences.awsProfile
         let regions = awsEffectiveRegions
-        let (fetched, errors) = await AWSClient.describeAllInstances(profile: profile, regions: regions)
+        // EC2 and WorkSpaces fan out concurrently — one shouldn't wait on
+        // the other, and a slow region in either doesn't stall the refresh.
+        async let instancesResult = AWSClient.describeAllInstances(profile: profile, regions: regions)
+        async let workspacesResult = AWSClient.describeAllWorkspaces(profile: profile, regions: regions)
+        let (fetched, errors) = await instancesResult
+        let (fetchedWorkspaces, workspaceErrors) = await workspacesResult
+
         awsInstances = fetched
         awsRegionErrors = errors
+        awsWorkspaces = fetchedWorkspaces
+        awsWorkspaceRegionErrors = workspaceErrors
         awsLastRefreshed = Date()
         awsIsRefreshing = false
 
         checkAWSLongRunningAlerts()
+        checkAWSIdleWorkspaceAlerts()
     }
 
     /// Resolves "who am I" for the "mine" badge/filter, once per profile.
@@ -280,6 +376,40 @@ final class AppModel: ObservableObject {
                 source: "AWS Boxes · \(instance.region)",
                 title: "EC2 box running long",
                 detail: "\(instance.displayName) running \(hours)h"
+            ))
+        }
+    }
+
+    /// The long-running waste alert, for WorkSpaces.
+    ///
+    /// An AUTO_STOP WorkSpace parks itself and stops billing, so it is never
+    /// alerted however long it sits — that mode is the fix, not the problem.
+    /// An ALWAYS_ON WorkSpace bills at the full rate whether or not anyone
+    /// connects, and it has no launch time to measure against (it is up by
+    /// definition), so the measurable waste is idle time: nobody has
+    /// connected for longer than the same threshold the EC2 alert uses. A
+    /// WorkSpace AWS has no connection record for is never alerted, since
+    /// there is nothing to measure.
+    private func checkAWSIdleWorkspaceAlerts() {
+        guard preferences.awsBoxesEnabled, preferences.awsLongRunningAlertEnabled else { return }
+        let thresholdHours = Double(max(1, preferences.awsLongRunningAlertHours))
+
+        let stillIdle = Set(
+            awsWorkspaces
+                .filter { $0.isWastefullyIdle(thresholdHours: thresholdHours) }
+                .map(\.id)
+        )
+        awsIdleWorkspaceAlerted.formIntersection(stillIdle)
+
+        for workspace in awsWorkspaces where workspace.isWastefullyIdle(thresholdHours: thresholdHours) {
+            guard !awsIdleWorkspaceAlerted.contains(workspace.id) else { continue }
+            awsIdleWorkspaceAlerted.insert(workspace.id)
+            let hours = Int((workspace.idleTime() ?? 0) / 3600)
+            ingest(AlertEvent(
+                severity: .warning,
+                source: "AWS Boxes · \(workspace.region)",
+                title: "WorkSpace always-on and idle",
+                detail: "\(workspace.displayName) unused for \(hours)h"
             ))
         }
     }
