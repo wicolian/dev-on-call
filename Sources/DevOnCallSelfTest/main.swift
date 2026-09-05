@@ -184,6 +184,50 @@ do {
     print("FAIL  EC2 instance decode threw \(error)")
 }
 
+// AWS Boxes: "mine" awareness — deriving a username from a caller-identity
+// ARN, and matching it against an instance's Owner tag.
+expect(
+    AWSIdentity.userName(fromArn: "arn:aws:iam::111122223333:user/koushik_dbn") == "koushik",
+    "a plain IAM user ARN yields the username with the _dbn suffix stripped"
+)
+expect(
+    AWSIdentity.userName(fromArn: "arn:aws:iam::111122223333:user/bots/deploy-bot") == "deploy-bot",
+    "a /bots/ path component is stripped, keeping only the final username"
+)
+expect(
+    AWSIdentity.userName(fromArn: "arn:aws:sts::111122223333:assumed-role/SomeRole/session") == nil,
+    "a non-IAM-user ARN (assumed-role) yields no username"
+)
+
+let ownedInstance = Instance(
+    id: "i-owned",
+    region: "ap-south-1",
+    name: "priya-box",
+    owner: "Priya",
+    instanceType: "t3.medium",
+    state: .running,
+    lifecycle: .onDemand,
+    publicIP: nil,
+    launchTime: nil
+)
+expect(ownedInstance.isOwned(by: "priya"), "ownership match is case-insensitive")
+expect(!ownedInstance.isOwned(by: "koushik"), "a different username is not a match")
+expect(!ownedInstance.isOwned(by: nil), "no current user means never mine")
+
+let untaggedInstance = Instance(
+    id: "i-no-name",
+    region: "ap-south-1",
+    name: nil,
+    owner: nil,
+    instanceType: "t3.medium",
+    state: .running,
+    lifecycle: .onDemand,
+    publicIP: nil,
+    launchTime: nil
+)
+expect(untaggedInstance.displayName == untaggedInstance.id, "an instance with no Name tag falls back to its instance id")
+expect(!untaggedInstance.isOwned(by: "koushik"), "an instance with no Owner tag is never mine")
+
 if failures > 0 {
     print("\n\(failures) self-test(s) failed")
     exit(1)

@@ -23,6 +23,22 @@ final class AppModel: ObservableObject {
     @Published private(set) var awsLastRefreshed: Date?
     @Published private(set) var awsActingInstanceIDs: Set<String> = []
 
+    /// True when the configured profile (default "sako") has no section at
+    /// all in the local AWS config/credentials files — the "a colleague
+    /// hasn't run `aws configure` yet" case, shown as a setup card instead
+    /// of a CLI error.
+    @Published private(set) var awsProfileMissing = false
+    /// Username derived from `aws sts get-caller-identity`'s ARN for the
+    /// working profile, used for the "you" badge and "Only mine" filter.
+    @Published private(set) var awsCurrentUserName: String?
+    /// "Only mine" toggle in the AWS Boxes section header. Not persisted —
+    /// always starts off, per design.
+    @Published var awsOnlyMine = false
+    /// The region list to use when the user hasn't customized one yet.
+    /// Starts at the safe single-region colleague default and widens once
+    /// a local "keladev" profile is detected (Koushik's own machine).
+    @Published private(set) var awsDefaultRegions = AWSBoxesDefaults.colleagueRegions
+
     private let output = AlertOutputService()
     private var monitorTask: Task<Void, Never>?
     private var nextHerdrScan = Date.distantPast
@@ -38,6 +54,8 @@ final class AppModel: ObservableObject {
     private var nextAWSScan = Date.distantPast
     private var awsDidResolveProfile = false
     private var awsLongRunningAlerted: Set<String> = []
+    private var awsIdentityProfile: String?
+    private var didDetectAWSDefaultRegions = false
 
     private static let preferencesKey = "DevOnCall.preferences.v1"
 
@@ -50,6 +68,7 @@ final class AppModel: ObservableObject {
         }
         events = EventStore.loadArchive()
         startMonitoring()
+        Task { [weak self] in await self?.detectAWSDefaultRegionsIfNeeded() }
     }
 
     deinit { monitorTask?.cancel() }
@@ -84,17 +103,23 @@ final class AppModel: ObservableObject {
     }
 
     var awsEffectiveRegions: [String] {
-        preferences.awsRegions.isEmpty ? AWSBoxesDefaults.regions : preferences.awsRegions
+        preferences.awsRegions.isEmpty ? awsDefaultRegions : preferences.awsRegions
     }
 
     /// Instances grouped by region, each group sorted (running first, then
-    /// launch time), regions sorted alphabetically. Never filters an
-    /// instance out — every decoded instance from every region is included.
+    /// launch time), regions sorted alphabetically. Respects "Only mine"
+    /// when it's on; otherwise every decoded instance from every region is
+    /// included.
     var awsGroupedInstances: [(region: String, instances: [Instance])] {
-        let groups = Dictionary(grouping: awsInstances, by: \.region)
+        let base = awsOnlyMine ? awsInstances.filter { isMine($0) } : awsInstances
+        let groups = Dictionary(grouping: base, by: \.region)
         return groups.keys.sorted().map { region in
             (region: region, instances: (groups[region] ?? []).sortedForDisplay())
         }
+    }
+
+    func isMine(_ instance: Instance) -> Bool {
+        instance.isOwned(by: awsCurrentUserName)
     }
 
     var awsErrorSummary: String? {
@@ -161,6 +186,19 @@ final class AppModel: ObservableObject {
 
         guard AWSClient.resolveBinaryPath() != nil else {
             awsClientError = "aws CLI not found at /opt/homebrew/bin/aws or /usr/local/bin/aws"
+            awsProfileMissing = false
+            return
+        }
+
+        // A colleague who hasn't run `aws configure` yet gets a setup card
+        // instead of a cryptic CLI error — and we skip the network calls
+        // entirely, since we already know they'll fail.
+        let profileExists = await AWSClient.localProfileExists(preferences.awsProfile)
+        awsProfileMissing = !profileExists
+        guard profileExists else {
+            awsClientError = nil
+            awsInstances = []
+            awsRegionErrors = [:]
             return
         }
         awsClientError = nil
@@ -175,6 +213,8 @@ final class AppModel: ObservableObject {
             }
         }
 
+        await resolveAWSIdentityIfNeeded()
+
         awsIsRefreshing = true
         let profile = preferences.awsProfile
         let regions = awsEffectiveRegions
@@ -185,6 +225,36 @@ final class AppModel: ObservableObject {
         awsIsRefreshing = false
 
         checkAWSLongRunningAlerts()
+    }
+
+    /// Resolves "who am I" for the "mine" badge/filter, once per profile.
+    /// Re-resolves if the profile changes (e.g. the sako→keladev fallback
+    /// above, or the user edits it in Settings) or if it previously failed.
+    private func resolveAWSIdentityIfNeeded() async {
+        let profile = preferences.awsProfile
+        guard awsIdentityProfile != profile else { return }
+        if let identity = try? await AWSClient.callerIdentity(profile: profile) {
+            awsIdentityProfile = profile
+            awsCurrentUserName = AWSIdentity.userName(fromArn: identity.arn)
+        } else {
+            awsIdentityProfile = nil
+            awsCurrentUserName = nil
+        }
+    }
+
+    /// Runs once at launch: widens the default region list from the safe
+    /// single-region colleague default to the full list only when this
+    /// machine also has a local "keladev" profile configured — a cheap,
+    /// offline stand-in for "this looks like Koushik's own machine."
+    /// Doesn't touch `preferences.awsRegions` at all, so it only ever
+    /// affects the *default* — a customized region list always wins.
+    private func detectAWSDefaultRegionsIfNeeded() async {
+        guard !didDetectAWSDefaultRegions else { return }
+        guard AWSClient.resolveBinaryPath() != nil else { return }
+        didDetectAWSDefaultRegions = true
+        if await AWSClient.localProfileExists("keladev") {
+            awsDefaultRegions = AWSBoxesDefaults.regions
+        }
     }
 
     private func checkAWSLongRunningAlerts() {

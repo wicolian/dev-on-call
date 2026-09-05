@@ -18,8 +18,12 @@ import Foundation
 // MARK: - Shared defaults
 
 public enum AWSBoxesDefaults {
+    /// ap-south-2 (Hyderabad) is where the boxes are moving; ap-south-1
+    /// (Mumbai) stays in the list since existing boxes are still there
+    /// during the move.
     public static let regions = [
         "ap-south-1",
+        "ap-south-2",
         "us-east-1",
         "us-east-2",
         "us-west-2",
@@ -28,6 +32,37 @@ public enum AWSBoxesDefaults {
         "ap-southeast-1",
         "ap-southeast-2"
     ]
+
+    /// The safe minimal default for a machine that doesn't look like
+    /// Koushik's own (see `AWSIdentity` / AppModel's local-profile check):
+    /// just the account's two home regions, so a colleague's first scan
+    /// doesn't fan out across every region before they've configured
+    /// anything.
+    public static let colleagueRegions = ["ap-south-1", "ap-south-2"]
+}
+
+// MARK: - Identity
+
+public enum AWSIdentity {
+    /// Extracts a human username from an IAM caller-identity ARN.
+    ///
+    /// - `arn:aws:iam::111122223333:user/koushik_dbn` -> `koushik`
+    /// - `arn:aws:iam::111122223333:user/bots/deploy-bot` -> `deploy-bot`
+    /// - `arn:aws:sts::111122223333:assumed-role/...` -> `nil` (not an IAM user)
+    ///
+    /// IAM users can have a path (e.g. `/bots/`) between `user/` and the
+    /// actual username; the username is always the last path segment. A
+    /// trailing `_dbn` suffix (this account's naming convention) is
+    /// stripped so it matches a plain `Owner` tag value like `koushik`.
+    public static func userName(fromArn arn: String) -> String? {
+        guard let range = arn.range(of: "user/") else { return nil }
+        let afterUser = arn[range.upperBound...]
+        var name = afterUser.split(separator: "/").last.map(String.init) ?? String(afterUser)
+        if name.hasSuffix("_dbn") {
+            name.removeLast("_dbn".count)
+        }
+        return name.isEmpty ? nil : name
+    }
 }
 
 // MARK: - Raw AWS CLI JSON shapes (aws ec2 describe-instances --output json)
@@ -213,6 +248,14 @@ public struct Instance: Identifiable, Hashable, Sendable {
     public func isLongRunning(now: Date = Date(), thresholdHours: Double = 12) -> Bool {
         guard state == .running, let uptime = uptime(now: now) else { return false }
         return uptime > thresholdHours * 3600
+    }
+
+    /// Whether this box's `Owner` tag matches the given username
+    /// (case-insensitive). Powers the "you" badge and the "Only mine"
+    /// filter. Always false when either side is missing.
+    public func isOwned(by userName: String?) -> Bool {
+        guard let userName, !userName.isEmpty, let owner, !owner.isEmpty else { return false }
+        return owner.caseInsensitiveCompare(userName) == .orderedSame
     }
 }
 

@@ -20,6 +20,16 @@
 //     three always-visible text buttons;
 //   - the list caps its height and scrolls rather than growing the popover
 //     without bound.
+//
+// "Mine" awareness (colleague multi-tenancy on one shared account): a
+// subtle monospaced "YOU" tag reuses the section's one accent color rather
+// than inventing a second hue, and the "Only mine" toggle only appears once
+// there's an actual identity to filter by — a control that can't do
+// anything yet is worse than no control. The first-run setup card (shown
+// when the configured profile has no local AWS config at all) uses the
+// same inset/code-box treatment as Settings → Connect's CodeBox, so it
+// reads as "this app" rather than a bolted-on wizard.
+import AppKit
 import DevOnCallAWS
 import SwiftUI
 
@@ -48,33 +58,47 @@ struct AWSBoxesSection: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Text("AWS BOXES")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .tracking(0.7)
-                .foregroundStyle(.secondary)
-            if model.awsRunningCount > 0 {
-                Text("\(model.awsRunningCount) running")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("AWS BOXES")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer()
-            Text(lastRefreshedText)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.tertiary)
-            Button {
-                model.refreshAWSBoxesNow()
-            } label: {
-                if model.awsIsRefreshing {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10.5))
+                    .tracking(0.7)
+                    .foregroundStyle(.secondary)
+                if model.awsRunningCount > 0 {
+                    Text("\(model.awsRunningCount) running")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.tertiary)
                 }
+                Spacer()
+                Text(lastRefreshedText)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                Button {
+                    model.refreshAWSBoxesNow()
+                } label: {
+                    if model.awsIsRefreshing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10.5))
+                    }
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh now")
+                .disabled(model.awsIsRefreshing)
             }
-            .buttonStyle(.borderless)
-            .help("Refresh now")
-            .disabled(model.awsIsRefreshing)
+
+            // Only shown once we actually know who "you" are — a toggle
+            // that can't change anything yet would just be confusing.
+            if model.awsCurrentUserName != nil {
+                Toggle(isOn: $model.awsOnlyMine) {
+                    Text("Only mine")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+            }
         }
     }
 
@@ -85,12 +109,16 @@ struct AWSBoxesSection: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.awsInstances.isEmpty, !model.awsIsRefreshing, model.awsErrorSummary == nil {
+        if model.awsProfileMissing {
+            setupCard
+        } else if model.awsInstances.isEmpty, !model.awsIsRefreshing, model.awsErrorSummary == nil {
             emptyState
         } else if model.awsInstances.isEmpty, !model.awsIsRefreshing {
             // Errors present and nothing decoded — the error banner above
             // already explains why; keep this compact.
             EmptyView()
+        } else if model.awsOnlyMine, model.awsGroupedInstances.isEmpty, !model.awsIsRefreshing {
+            onlyMineEmptyState
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -117,6 +145,66 @@ struct AWSBoxesSection: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
+    }
+
+    private var onlyMineEmptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 18, weight: .light))
+                .foregroundStyle(.secondary)
+            Text("None of the visible boxes are tagged to you")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+
+    /// First-run state: the configured profile (default "sako") has no
+    /// section at all in the local AWS config, so every describe-instances
+    /// call would just fail. Rather than a wall of CLI error text, tell a
+    /// colleague exactly what to run.
+    private var setupCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "key.slash")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                Text("AWS access isn't set up yet")
+                    .font(.system(size: 12.5, weight: .semibold))
+            }
+
+            Text("Run this with your own access key, then set the region to ap-south-1 when asked:")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text(setupCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                Spacer(minLength: 8)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(setupCommand, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy command")
+            }
+            .padding(9)
+            .background(WatchPalette.inset)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            Link("Setup guide", destination: URL(string: SETUP_GUIDE_URL) ?? URL(string: "https://github.com/wicolian/dev-on-call")!)
+                .font(.system(size: 11))
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var setupCommand: String {
+        "aws configure --profile \(model.preferences.awsProfile)"
     }
 
     private func regionSection(_ group: (region: String, instances: [Instance])) -> some View {
@@ -174,6 +262,16 @@ private struct AWSInstanceRow: View {
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if model.isMine(instance) {
+                        Text("YOU")
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .tracking(0.3)
+                            .foregroundStyle(WatchPalette.healthy)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(WatchPalette.healthy.opacity(0.16))
+                            .clipShape(Capsule())
+                    }
                     Spacer(minLength: 6)
                     Text(instance.lifecycle.label.uppercased())
                         .font(.system(size: 8.5, weight: .bold, design: .monospaced))

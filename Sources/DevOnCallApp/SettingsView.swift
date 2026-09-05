@@ -5,6 +5,12 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Placeholder link for AWS onboarding. Point this at wherever the real
+/// setup guide ends up living (a repo doc, an internal wiki page) — this
+/// is the only place that needs to change. Shown both in Settings → AWS
+/// and in the popover's first-run setup card.
+let SETUP_GUIDE_URL = "https://github.com/wicolian/dev-on-call/blob/main/docs/AWS_SETUP.md"
+
 struct SettingsView: View {
     @ObservedObject var model: AppModel
 
@@ -38,13 +44,20 @@ private struct AWSSettings: View {
                 Text("Adds an AWS Boxes section to the popover: every EC2 instance across the regions below, grouped by region, with Stop/Start/Terminate. Off by default. Dev On Call shells out to the aws CLI the same way the rest of this app shells out to git and other tools — it never reads or stores AWS credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if AWSClient.resolveBinaryPath() == nil {
+                    Text("The aws CLI isn't installed — install it first (e.g. \"brew install awscli\").")
+                        .font(.caption)
+                        .foregroundStyle(WatchPalette.warning)
+                }
             }
 
             Section("AWS CLI") {
                 TextField("Profile", text: $model.preferences.awsProfile, prompt: Text("sako"))
-                Text("Falls back to profile \"keladev\" automatically the first time \"sako\" can't authenticate.")
+                Text("Falls back to profile \"keladev\" automatically the first time \"sako\" can't authenticate. Haven't run \"aws configure\" yet? The popover shows a setup card with the exact command the first time you turn this on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Link("Setup guide", destination: URL(string: SETUP_GUIDE_URL) ?? URL(string: "https://github.com/wicolian/dev-on-call")!)
+                    .font(.caption)
 
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(model.awsEffectiveRegions, id: \.self) { region in
@@ -72,7 +85,7 @@ private struct AWSSettings: View {
                         .disabled(newRegion.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 Button("Reset to default regions") {
-                    model.preferences.awsRegions = AWSBoxesDefaults.regions
+                    model.preferences.awsRegions = model.awsDefaultRegions
                 }
                 .font(.caption)
             }

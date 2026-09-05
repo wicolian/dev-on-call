@@ -179,15 +179,43 @@ public struct AWSClient {
         return stdoutData
     }
 
+    public struct CallerIdentity: Decodable, Sendable {
+        public let arn: String
+
+        enum CodingKeys: String, CodingKey {
+            case arn = "Arn"
+        }
+    }
+
+    /// Fetches the caller identity (account, user id, ARN) for a profile.
+    /// Used both to verify a profile authenticates and, via the ARN, to
+    /// work out whose boxes are whose for the "mine" badge/filter.
+    public static func callerIdentity(profile: String) async throws -> CallerIdentity {
+        let data = try await run(["sts", "get-caller-identity", "--profile", profile, "--output", "json"], timeout: 15)
+        return try JSONDecoder().decode(CallerIdentity.self, from: data)
+    }
+
     /// Verifies a profile can authenticate. Used at first refresh to decide
     /// whether to fall back from "sako" to "keladev".
     public static func checkIdentity(profile: String) async -> Bool {
-        do {
-            _ = try await run(["sts", "get-caller-identity", "--profile", profile, "--output", "json"], timeout: 15)
-            return true
-        } catch {
-            return false
-        }
+        (try? await callerIdentity(profile: profile)) != nil
+    }
+
+    /// Whether a named profile exists in the local AWS config/credentials
+    /// files at all — distinct from `checkIdentity`, which asks whether a
+    /// profile that does exist can actually authenticate. This is a purely
+    /// local, offline check (`aws configure list-profiles` just reads
+    /// `~/.aws/config` and `~/.aws/credentials`), so it's safe to call
+    /// often and works even with no network. Used to show a first-run setup
+    /// card instead of a confusing CLI error when a colleague hasn't run
+    /// `aws configure` yet.
+    public static func localProfileExists(_ name: String) async -> Bool {
+        guard let data = try? await run(["configure", "list-profiles"], timeout: 10) else { return false }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return text
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .contains(name)
     }
 
     /// Fetches instances for a single region.

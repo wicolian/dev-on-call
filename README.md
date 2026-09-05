@@ -104,20 +104,38 @@ In **Settings → Monitors**, add any command with this contract:
 
 Examples include a script that checks the latest GitHub Actions run, a review-bot status command, a local server health check, or a test watcher. Commands run as your macOS user, so only add commands you trust.
 
-## AWS boxes
+## AWS boxes (for the Databrain team)
 
-Folded in from the standalone "AWS Boxes" menu-bar tool: an EC2 instance list for a shared startup-credits AWS account, so a forgotten box doesn't run all night. **Off by default.**
+If you're on the team and just want to keep an eye on our shared AWS account's EC2 boxes — see what's running, stop your own forgotten one, without typing any AWS CLI commands — this is for you.
 
-Turn it on in **Settings → AWS** with **Show AWS boxes**. Once enabled:
+### What it shows
 
-- The popover gets an **AWS Boxes** section listing every EC2 instance across the configured regions, grouped by region — name, type, state, spot/on-demand, and uptime.
-- Rows running longer than the configured limit (12 hours by default) get an orange tint.
-- Each row has **Stop**, **Start**, and **Terminate** (Terminate always asks for confirmation naming the instance).
-- The list auto-refreshes every 60 seconds, same cadence as everything else in the popover; a manual refresh button is always there.
+- An **AWS Boxes** section in the popover, listing every EC2 instance in the shared account, grouped by region — name, type, state, spot/on-demand, and uptime.
+- Our EC2 boxes live primarily in **ap-south-2 (Hyderabad)**, with `ap-south-1` (Mumbai) also checked while boxes are mid-move between the two.
+- A box tagged with your name in its `Owner` tag gets a small **YOU** badge, and the **Only mine** switch in the section header filters the list down to just those.
+- Rows running longer than 12 hours get an orange tint — a nudge that something may have been left on overnight.
+- Each row's **···** menu has **Stop**, **Start**, and **Terminate** (Terminate always asks for confirmation naming the instance first).
+
+![AWS Boxes list](docs/screenshots/aws-boxes-list.png)
+
+![AWS Boxes row menu](docs/screenshots/aws-boxes-row-menu.png)
+
+### How to enable it
+
+1. Open **Settings → AWS** and turn on **Show AWS boxes**.
+2. The AWS CLI profile field defaults to `sako` — leave it as is unless someone tells you otherwise.
+3. That's it. If your machine already has the `sako` profile configured, the list loads within a few seconds.
+
+### First run
+
+If you haven't run `aws configure --profile sako` yet, the AWS Boxes section shows a setup card instead of an error: a **Copy** button next to the exact command to run in Terminal. Paste your access key when prompted, and set the region to `ap-south-1` when it asks (the app itself checks both `ap-south-1` and `ap-south-2` regardless of what you set there). Ask in the team channel for an access key if you don't have one yet.
+
+### Everything else
+
+- The list auto-refreshes every 60 seconds; a manual refresh button is always there, and it disables itself while a refresh is already in flight so you can't queue up a pile of `aws` calls by mashing it.
+- Every `aws` CLI call has a hard timeout, so a hung CLI (bad network, stale SSO session) can't freeze the popover.
 - A CLI error (an expired SSO session, a missing `aws` binary) shows inline instead of crashing or hanging the app.
 - The menu-bar label shows the running-instance count as a plain number next to the status glyph.
-
-Settings → AWS also holds the **AWS CLI profile** (defaults to `sako`, falling back to `keladev` automatically the first time `sako` can't authenticate) and the region list.
 
 **Long-running alert:** optionally, the first time a running box crosses the configured hour limit, Dev On Call raises one warning straight into the same signal rail as every other alert (e.g. "EC2 box koushik-sandbox running 14h") — deduplicated the same way, through the same inbox path, not a second alerting system.
 
