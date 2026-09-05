@@ -1,4 +1,5 @@
 import Darwin
+import DevOnCallAWS
 import DevOnCallCore
 import Foundation
 
@@ -115,6 +116,72 @@ do {
 } catch {
     failures += 1
     print("FAIL  repo hook lifecycle threw \(error)")
+}
+
+// AWS Boxes: preferences saved before this feature existed must not reset
+// on load just because the new keys are missing.
+let legacyPreferencesJSON = """
+{"isArmed":true,"herdrEnabled":true,"herdrPollSeconds":10,"blockedDelaySeconds":90,\
+"soundEnabled":false,"customSoundPath":"","speechEnabled":false,\
+"systemNotificationsEnabled":false,"quietHoursEnabled":true,"quietStartHour":23,\
+"quietEndHour":8,"allowCriticalDuringQuietHours":false,"aiProvider":"off",\
+"aiModel":"","aiExecutablePath":"","aiTimeoutSeconds":45,"probes":[]}
+""".data(using: .utf8)!
+do {
+    let decoded = try JSONDecoder().decode(AppPreferences.self, from: legacyPreferencesJSON)
+    expect(decoded.herdrPollSeconds == 10, "legacy preferences without AWS keys still decode existing fields")
+    expect(!decoded.awsBoxesEnabled, "AWS boxes default to off for legacy preferences")
+    expect(decoded.awsProfile == "sako", "AWS profile defaults to sako for legacy preferences")
+    expect(decoded.awsLongRunningAlertHours == 12, "AWS long-running alert defaults to 12 hours")
+} catch {
+    failures += 1
+    print("FAIL  legacy preferences decode threw \(error)")
+}
+
+// AWS Boxes: decoding must keep every instance, including spot instances,
+// across every reservation in a region's response.
+let sampleDescribeInstancesJSON = """
+{
+  "Reservations": [
+    {
+      "Instances": [
+        {
+          "InstanceId": "i-0aaaaaaaaaaaaaaaa",
+          "InstanceType": "m7g.xlarge",
+          "State": { "Name": "running" },
+          "LaunchTime": "2020-01-01T00:00:00.000Z",
+          "InstanceLifecycle": "spot",
+          "Tags": [{ "Key": "Name", "Value": "koushik-sandbox" }]
+        }
+      ]
+    },
+    {
+      "Instances": [
+        {
+          "InstanceId": "i-0bbbbbbbbbbbbbbbb",
+          "InstanceType": "t3.medium",
+          "State": { "Name": "stopped" },
+          "LaunchTime": "2020-01-01T00:00:00.000Z",
+          "Tags": [{ "Key": "Name", "Value": "staging-api" }]
+        }
+      ]
+    }
+  ]
+}
+""".data(using: .utf8)!
+do {
+    let decoded = try JSONDecoder().decode(EC2DescribeInstancesResponse.self, from: sampleDescribeInstancesJSON)
+    let instances = decoded.toInstances(region: "us-east-1")
+    expect(instances.count == 2, "both reservations' instances decode — none silently dropped")
+    let spot = instances.first { $0.displayName == "koushik-sandbox" }
+    expect(spot?.lifecycle == .spot, "a spot instance keeps its spot lifecycle, not filtered or reclassified")
+    expect(spot?.isLongRunning() == true, "a box running since 2020 is flagged long-running")
+    let sorted = instances.sortedForDisplay()
+    expect(sorted.count == 2, "sortedForDisplay never drops an instance")
+    expect(sorted.first?.state == .running, "running instances sort first")
+} catch {
+    failures += 1
+    print("FAIL  EC2 instance decode threw \(error)")
 }
 
 if failures > 0 {
