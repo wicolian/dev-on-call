@@ -10,12 +10,16 @@ struct MenuPanel: View {
             header
             Divider().opacity(0.55)
             statusStrip
+            if model.preferences.awsBoxesEnabled {
+                Divider().opacity(0.55)
+                AWSBoxesSection(model: model)
+            }
             Divider().opacity(0.55)
             eventFeed
             Divider().opacity(0.55)
             footer
         }
-        .frame(width: 404, height: 526)
+        .frame(width: 404, height: model.preferences.awsBoxesEnabled ? 736 : 526)
         .background(.regularMaterial)
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import DevOnCallAWS
 import DevOnCallCore
 import ServiceManagement
 import SwiftUI
@@ -13,6 +14,8 @@ struct SettingsView: View {
                 .tabItem { Label("Alerts", systemImage: "bell.badge") }
             MonitoringSettings(model: model)
                 .tabItem { Label("Monitors", systemImage: "waveform.path.ecg") }
+            AWSSettings(model: model)
+                .tabItem { Label("AWS", systemImage: "server.rack") }
             IntelligenceSettings(model: model)
                 .tabItem { Label("Voice", systemImage: "waveform.and.person.filled") }
             IntegrationSettings()
@@ -21,6 +24,94 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 720, height: 520)
+    }
+}
+
+private struct AWSSettings: View {
+    @ObservedObject var model: AppModel
+    @State private var newRegion = ""
+
+    var body: some View {
+        Form {
+            Section("EC2 boxes") {
+                Toggle("Show AWS boxes", isOn: $model.preferences.awsBoxesEnabled)
+                Text("Adds an AWS Boxes section to the popover: every EC2 instance across the regions below, grouped by region, with Stop/Start/Terminate. Off by default. Dev On Call shells out to the aws CLI the same way the rest of this app shells out to git and other tools — it never reads or stores AWS credentials.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("AWS CLI") {
+                TextField("Profile", text: $model.preferences.awsProfile, prompt: Text("sako"))
+                Text("Falls back to profile \"keladev\" automatically the first time \"sako\" can't authenticate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(model.awsEffectiveRegions, id: \.self) { region in
+                        HStack {
+                            Text(region)
+                                .font(.system(.body, design: .monospaced))
+                            Spacer()
+                            Button {
+                                removeRegion(region)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 3)
+                        Divider()
+                    }
+                }
+
+                HStack {
+                    TextField("Add region", text: $newRegion, prompt: Text("eu-central-1"))
+                        .onSubmit(addRegion)
+                    Button("Add", action: addRegion)
+                        .disabled(newRegion.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Button("Reset to default regions") {
+                    model.preferences.awsRegions = AWSBoxesDefaults.regions
+                }
+                .font(.caption)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+
+            Section("Long-running alert") {
+                Toggle("Alert when a box runs longer than the limit", isOn: $model.preferences.awsLongRunningAlertEnabled)
+                Stepper(
+                    "Limit: \(model.preferences.awsLongRunningAlertHours) hours",
+                    value: $model.preferences.awsLongRunningAlertHours,
+                    in: 1...72
+                )
+                Text("The first time a running box crosses this limit, Dev On Call adds one warning to the signal rail (e.g. \"EC2 box koushik-sandbox running 14h\"), deduplicated the same way every other alert is. Rows past the limit are also tinted orange in the popover.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+        }
+        .formStyle(.grouped)
+        .padding(.top, 8)
+    }
+
+    private func addRegion() {
+        let trimmed = newRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var regions = model.awsEffectiveRegions
+        guard !regions.contains(trimmed) else {
+            newRegion = ""
+            return
+        }
+        regions.append(trimmed)
+        model.preferences.awsRegions = regions
+        newRegion = ""
+    }
+
+    private func removeRegion(_ region: String) {
+        var regions = model.awsEffectiveRegions
+        regions.removeAll { $0 == region }
+        model.preferences.awsRegions = regions
     }
 }
 
