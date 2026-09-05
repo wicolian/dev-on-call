@@ -177,6 +177,15 @@ Create distributable ZIP and DMG images:
 ./scripts/package-app.sh
 ```
 
+### Account-side spend guards
+
+[`tools/aws-guards`](tools/aws-guards) has three standalone Lambda
+functions (spend-guard, gpu-swap, idle-stop) for enforcing EC2 spend
+limits on the account side — the enforcement counterpart to this app's
+read-only-by-default AWS Boxes popover. Not wired into the app; deployed
+and configured independently. See its own README for thresholds and
+deploy steps.
+
 ## Honest limitations
 
 macOS does not expose every terminal's text buffer through one safe universal API. Dev On Call automatically reads Herdr through its documented read-only CLI. Other terminals integrate through `dev-on-call alert`, log/status scripts, or shell probes. The app does not request Accessibility or Screen Recording permission and does not scrape unrelated windows.

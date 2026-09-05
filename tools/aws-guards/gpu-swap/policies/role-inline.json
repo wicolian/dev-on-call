@@ -1,0 +1,45 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:*"
+    },
+    {
+      "Sid": "ReadGpuQuotas",
+      "Effect": "Allow",
+      "Action": ["servicequotas:GetServiceQuota"],
+      "Resource": "arn:aws:servicequotas:<REGION>:<ACCOUNT_ID>:ec2/*"
+    },
+    {
+      "Sid": "DescribeInstancesCannotBeScoped",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SwapOnlyTheMusicBox",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:StopInstances",
+        "ec2:StartInstances",
+        "ec2:ModifyInstanceAttribute"
+      ],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID>"
+    },
+    {
+      "Sid": "PublishAlerts",
+      "Effect": "Allow",
+      "Action": ["sns:Publish"],
+      "Resource": "arn:aws:sns:<REGION>:<ACCOUNT_ID>:<TOPIC_NAME>"
+    },
+    {
+      "Sid": "SwapState",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:PutParameter"],
+      "Resource": "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:parameter/<STATE_PATH_PREFIX>/*"
+    }
+  ]
+}

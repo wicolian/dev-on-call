@@ -1,0 +1,67 @@
+{
+  "_comment": "Not read by the Lambdas directly — each key here is an environment variable. Copy the relevant section's values into `aws lambda update-function-configuration --environment 'Variables={...}'` (or the console) for the matching function. Every value below is a placeholder; none of it is real.",
+
+  "spend-guard": {
+    "ACCOUNT_ID": "123456789012",
+    "HOME_REGION": "us-east-1",
+    "FUNCTION_NAME": "spend-guard",
+    "CREDITS_START": "2025-01-01",
+    "CREDITS_END": "2026-12-31",
+    "CREDITS_TOTAL": "5000",
+    "WARN": "3500",
+    "STOP": "4000",
+    "WARN_BAND": "100",
+    "TOPIC_NAME": "spend-guard-alerts",
+    "TOPIC_ARN": "arn:aws:sns:us-east-1:123456789012:spend-guard-alerts",
+    "GUEST_GROUP": "aws-guests",
+    "DENY_POLICY_ARN": "arn:aws:iam::123456789012:policy/DenyAllForGuests",
+    "STATE_PARAM": "/aws-guards/spend-guard/state"
+  },
+
+  "gpu-swap": {
+    "ACCOUNT_ID": "123456789012",
+    "HOME_REGION": "us-east-1",
+    "FUNCTION_NAME": "gpu-swap",
+    "INSTANCE_ID": "i-0000000000000000",
+    "INSTANCE_NAME": "gpu-workstation",
+    "TARGET_TYPE": "g4dn.xlarge",
+    "FALLBACK_TYPE": "m6i.xlarge",
+    "ONDEMAND_G_QUOTA": "L-DB2E81BA",
+    "SPOT_G_QUOTA": "L-3819A6DF",
+    "REQUIRED_VCPUS": "4",
+    "STOP_WAIT_DELAY": "15",
+    "STOP_WAIT_ATTEMPTS": "20",
+    "MAX_CAPACITY_RETRIES": "12",
+    "TOPIC_NAME": "spend-guard-alerts",
+    "TOPIC_ARN": "arn:aws:sns:us-east-1:123456789012:spend-guard-alerts",
+    "STATE_PARAM": "/aws-guards/gpu-swap/state"
+  },
+
+  "idle-stop": {
+    "ACCOUNT_ID": "123456789012",
+    "HOME_REGION": "us-east-1",
+    "FUNCTION_NAME": "idle-stop",
+    "TOPIC_NAME": "spend-guard-alerts",
+    "TOPIC_ARN": "arn:aws:sns:us-east-1:123456789012:spend-guard-alerts",
+    "IDLE_HOURS": "3",
+    "CPU_AVG_MAX": "3",
+    "CPU_PEAK_MAX": "15",
+    "PACKETS_MAX": "3000",
+    "PERIOD": "300",
+    "MIN_DATAPOINTS": "30",
+    "EXEMPT_TAG_KEY": "AutoStop",
+    "EXEMPT_TAG_VALUE": "off",
+    "STOPPED_TAG_KEY": "AutoStopped",
+    "SKIP_INSTANCE_IDS": "i-0000000000000000,i-0000000000000001"
+  },
+
+  "iam_policy_placeholders": {
+    "_comment": "The policies/*.json files are hand-edit templates, not read at runtime. Replace every <TOKEN> before creating the role/policy.",
+    "<ACCOUNT_ID>": "your 12-digit account id",
+    "<REGION>": "e.g. us-east-1",
+    "<GUEST_GROUP>": "the IAM group name spend-guard is allowed to lock, e.g. aws-guests",
+    "<TOPIC_NAME>": "the SNS topic name, e.g. spend-guard-alerts",
+    "<STATE_PATH_PREFIX>": "the SSM parameter path prefix, e.g. aws-guards/spend-guard",
+    "<INSTANCE_ID>": "the one instance gpu-swap is allowed to touch"
+  }
+}
