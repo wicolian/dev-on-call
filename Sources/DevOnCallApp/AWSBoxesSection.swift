@@ -90,7 +90,7 @@ struct AWSBoxesSection: View {
 
             // Only shown once we actually know who "you" are — a toggle
             // that can't change anything yet would just be confusing.
-            if model.awsCurrentUserName != nil {
+            if model.awsEffectiveUserName != nil {
                 Toggle(isOn: $model.awsOnlyMine) {
                     Text("Only mine")
                         .font(.system(size: 10, weight: .medium))

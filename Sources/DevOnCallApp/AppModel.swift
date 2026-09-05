@@ -155,12 +155,23 @@ final class AppModel: ObservableObject {
         !awsGroupedInstances.isEmpty || !awsGroupedWorkspaces.isEmpty
     }
 
+    /// Whose boxes count as yours. The manual override in Settings wins
+    /// when it's set, because the derived identity is only a good guess:
+    /// on a shared account handing out per-machine bot users, the IAM
+    /// username (`bots/kela-mac`) has nothing to do with the `Owner` tags
+    /// or WorkSpace users that person actually owns.
+    var awsEffectiveUserName: String? {
+        let override = preferences.awsOwnerName.trimmingCharacters(in: .whitespaces)
+        if !override.isEmpty { return override }
+        return awsCurrentUserName
+    }
+
     func isMine(_ instance: Instance) -> Bool {
-        instance.isOwned(by: awsCurrentUserName)
+        instance.isOwned(by: awsEffectiveUserName)
     }
 
     func isMine(_ workspace: Workspace) -> Bool {
-        workspace.isOwned(by: awsCurrentUserName)
+        workspace.isOwned(by: awsEffectiveUserName)
     }
 
     var awsErrorSummary: String? {
@@ -348,8 +359,19 @@ final class AppModel: ObservableObject {
         guard !didDetectAWSDefaultRegions else { return }
         guard AWSClient.resolveBinaryPath() != nil else { return }
         didDetectAWSDefaultRegions = true
-        if await AWSClient.localProfileExists("keladev") {
-            awsDefaultRegions = AWSBoxesDefaults.regions
+        guard await AWSClient.localProfileExists("keladev") else { return }
+        awsDefaultRegions = AWSBoxesDefaults.regions
+
+        // Same "this looks like Koushik's own machine" signal, reused once
+        // to pre-fill the owner name. This account's `sako` profile
+        // authenticates as a per-machine bot user (`bots/kela-mac`), so the
+        // derived identity never matches the `Owner` tags or WorkSpace
+        // users it actually owns and nothing would ever badge. Runs at most
+        // once, and never over a value that's already there — clearing the
+        // field in Settings has to stay cleared.
+        if !preferences.awsOwnerNameDidPrefill, preferences.awsOwnerName.isEmpty {
+            preferences.awsOwnerName = "koushik"
+            preferences.awsOwnerNameDidPrefill = true
         }
     }
 

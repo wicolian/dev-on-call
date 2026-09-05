@@ -91,6 +91,18 @@ private struct AWSSettings: View {
             }
             .disabled(!model.preferences.awsBoxesEnabled)
 
+            Section("Ownership") {
+                TextField(
+                    "Show boxes owned by",
+                    text: $model.preferences.awsOwnerName,
+                    prompt: Text(ownerNamePrompt)
+                )
+                Text(ownerNameCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+
             Section("Long-running alert") {
                 Toggle("Alert when a box runs longer than the limit", isOn: $model.preferences.awsLongRunningAlertEnabled)
                 Stepper(
@@ -106,6 +118,22 @@ private struct AWSSettings: View {
         }
         .formStyle(.grouped)
         .padding(.top, 8)
+    }
+
+    /// The placeholder shows what the field falls back to, so an empty box
+    /// still says what the app is doing rather than looking unconfigured.
+    private var ownerNamePrompt: String {
+        model.awsCurrentUserName ?? "Your AWS username"
+    }
+
+    private var ownerNameCaption: String {
+        var text = "A box's Owner tag or a WorkSpace's assigned user has to equal this for the row to get a YOU badge and to survive the \"Only mine\" filter. "
+        if let derived = model.awsCurrentUserName {
+            text += "Leave it empty to use the name from your AWS identity (\"\(derived)\") — set it when that isn't the name on your boxes, which happens when a shared account signs you in as a per-machine user whose name matches nothing you own."
+        } else {
+            text += "Leave it empty to use the name from your AWS identity, once a profile authenticates."
+        }
+        return text
     }
 
     private func addRegion() {

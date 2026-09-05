@@ -112,6 +112,18 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var awsRegions: [String] = []
     public var awsLongRunningAlertEnabled = true
     public var awsLongRunningAlertHours = 12
+    /// Which owner name counts as "you" for the YOU badge and the "Only
+    /// mine" filter. Empty means "use the username derived from the AWS
+    /// caller identity", which is right whenever the IAM user is named
+    /// after the person. It isn't always: a shared account can hand out
+    /// per-machine bot users (`bots/kela-mac`) whose name has nothing to do
+    /// with the `Owner` tags or WorkSpace users they own, and then nothing
+    /// ever badges. This field is the manual override for that case.
+    public var awsOwnerName = ""
+    /// Whether the one-time local pre-fill of `awsOwnerName` has already
+    /// happened. Kept separate so clearing the field stays cleared instead
+    /// of being helpfully re-filled on the next launch.
+    public var awsOwnerNameDidPrefill = false
 
     public init() {}
 
@@ -145,6 +157,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         awsRegions = try container.decodeIfPresent([String].self, forKey: .awsRegions) ?? []
         awsLongRunningAlertEnabled = try container.decodeIfPresent(Bool.self, forKey: .awsLongRunningAlertEnabled) ?? true
         awsLongRunningAlertHours = try container.decodeIfPresent(Int.self, forKey: .awsLongRunningAlertHours) ?? 12
+        awsOwnerName = try container.decodeIfPresent(String.self, forKey: .awsOwnerName) ?? ""
+        awsOwnerNameDidPrefill = try container.decodeIfPresent(Bool.self, forKey: .awsOwnerNameDidPrefill) ?? false
     }
 }
 

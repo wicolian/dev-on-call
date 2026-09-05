@@ -133,6 +133,8 @@ do {
     expect(!decoded.awsBoxesEnabled, "AWS boxes default to off for legacy preferences")
     expect(decoded.awsProfile == "sako", "AWS profile defaults to sako for legacy preferences")
     expect(decoded.awsLongRunningAlertHours == 12, "AWS long-running alert defaults to 12 hours")
+    expect(decoded.awsOwnerName.isEmpty, "the owner-name override defaults to empty (use the derived identity)")
+    expect(!decoded.awsOwnerNameDidPrefill, "legacy preferences have not been pre-filled yet")
 } catch {
     failures += 1
     print("FAIL  legacy preferences decode threw \(error)")
@@ -385,6 +387,65 @@ let untaggedInstance = Instance(
 )
 expect(untaggedInstance.displayName == untaggedInstance.id, "an instance with no Name tag falls back to its instance id")
 expect(!untaggedInstance.isOwned(by: "koushik"), "an instance with no Owner tag is never mine")
+
+// AWS Boxes: the owner-name override. This account's "sako" profile
+// authenticates as the per-machine bot user "bots/kela-mac", so the name
+// derived from the caller identity matches nothing Koushik actually owns
+// and no row would ever badge. The Settings override is what closes that
+// gap, and it has to work identically for a box and for a desktop.
+let derivedBotIdentity = AWSIdentity.userName(fromArn: "arn:aws:iam::111122223333:user/bots/kela-mac")
+expect(derivedBotIdentity == "kela-mac", "a per-machine bot user derives its own name, not the person's")
+
+let koushikBox = Instance(
+    id: "i-koushik",
+    region: "ap-south-1",
+    name: "koushik-music",
+    owner: "koushik",
+    instanceType: "m6i.xlarge",
+    state: .running,
+    lifecycle: .onDemand,
+    publicIP: nil,
+    launchTime: nil
+)
+let koushikDesktop = Workspace(
+    id: "ws-koushik",
+    region: "ap-south-1",
+    userName: "koushik",
+    computerName: "WSAMZN-I3L3J52A",
+    bundleId: nil,
+    computeTypeName: "GRAPHICS_G4DN",
+    operatingSystemName: nil,
+    state: .available,
+    runningMode: WorkspaceRunningMode(raw: "AUTO_STOP", timeoutMinutes: 60),
+    errorMessage: nil,
+    connection: nil
+)
+expect(!koushikBox.isOwned(by: derivedBotIdentity), "the derived bot name badges nothing — the gap the override exists to close")
+expect(!koushikDesktop.isOwned(by: derivedBotIdentity), "the same gap applies to a desktop")
+expect(koushikBox.isOwned(by: "koushik"), "the override name badges the box")
+expect(koushikDesktop.isOwned(by: "koushik"), "the override name badges the desktop identically")
+expect(koushikDesktop.isOwned(by: "KOUSHIK"), "the override is matched case-insensitively, like the derived name")
+
+// A saved override has to survive a preferences round-trip, and clearing it
+// must stay cleared rather than being re-filled by the one-time local
+// pre-fill on the next launch.
+do {
+    var prefs = AppPreferences()
+    prefs.awsOwnerName = "koushik"
+    prefs.awsOwnerNameDidPrefill = true
+    let roundTripped = try JSONDecoder().decode(AppPreferences.self, from: JSONEncoder().encode(prefs))
+    expect(roundTripped.awsOwnerName == "koushik", "the owner-name override survives a save/load round-trip")
+    expect(roundTripped.awsOwnerNameDidPrefill, "the pre-fill marker survives, so clearing the field stays cleared")
+
+    var cleared = roundTripped
+    cleared.awsOwnerName = ""
+    let clearedAgain = try JSONDecoder().decode(AppPreferences.self, from: JSONEncoder().encode(cleared))
+    expect(clearedAgain.awsOwnerName.isEmpty && clearedAgain.awsOwnerNameDidPrefill,
+           "an emptied override stays empty while the pre-fill marker stays set")
+} catch {
+    failures += 1
+    print("FAIL  owner-name override round-trip threw \(error)")
+}
 
 if failures > 0 {
     print("\n\(failures) self-test(s) failed")

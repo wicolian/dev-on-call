@@ -112,7 +112,7 @@ If you're on the team and just want to keep an eye on our shared AWS account's E
 
 - An **AWS Boxes** section in the popover, listing every EC2 instance in the shared account, grouped by region — name, type, state, spot/on-demand, and uptime.
 - Our EC2 boxes live primarily in **ap-south-2 (Hyderabad)**, with `ap-south-1` (Mumbai) also checked while boxes are mid-move between the two.
-- A box tagged with your name in its `Owner` tag gets a small **YOU** badge, and the **Only mine** switch in the section header filters the list down to just those.
+- A box tagged with your name in its `Owner` tag gets a small **YOU** badge, and the **Only mine** switch in the section header filters the list down to just those. The name comes from your AWS identity by default; if that isn't the name on your boxes — a shared account can sign you in as a per-machine user whose name matches nothing you own — set it yourself in **Settings → AWS → Ownership → Show boxes owned by**.
 - Rows running longer than 12 hours get an orange tint — a nudge that something may have been left on overnight.
 - Each row's **···** menu has **Stop**, **Start**, and **Terminate** (Terminate always asks for confirmation naming the instance first).
 
