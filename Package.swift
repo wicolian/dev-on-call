@@ -14,9 +14,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "DevOnCallCore"),
+        .target(name: "DevOnCallAWS"),
         .executableTarget(
             name: "DevOnCallApp",
-            dependencies: ["DevOnCallCore"]
+            dependencies: ["DevOnCallCore", "DevOnCallAWS"]
         ),
         .executableTarget(
             name: "DevOnCallCLI",
@@ -24,7 +25,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "DevOnCallSelfTest",
-            dependencies: ["DevOnCallCore"]
+            dependencies: ["DevOnCallCore", "DevOnCallAWS"]
         )
     ]
 )
