@@ -1,0 +1,58 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:*"
+    },
+    {
+      "Sid": "CostExplorer",
+      "Effect": "Allow",
+      "Action": ["ce:GetCostAndUsage"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Ec2ReadAndStop",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeRegions",
+        "ec2:DescribeInstances",
+        "ec2:StopInstances",
+        "ec2:DescribeSpotInstanceRequests",
+        "ec2:CancelSpotInstanceRequests"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AttachDenyAllToGuestsOnly",
+      "Effect": "Allow",
+      "Action": ["iam:AttachGroupPolicy"],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:group/<GUEST_GROUP>",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PolicyARN": "arn:aws:iam::<ACCOUNT_ID>:policy/DenyAllForGuests"
+        }
+      }
+    },
+    {
+      "Sid": "ListGuestGroupPolicies",
+      "Effect": "Allow",
+      "Action": ["iam:ListAttachedGroupPolicies"],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:group/<GUEST_GROUP>"
+    },
+    {
+      "Sid": "PublishAlerts",
+      "Effect": "Allow",
+      "Action": ["sns:Publish"],
+      "Resource": "arn:aws:sns:<REGION>:<ACCOUNT_ID>:<TOPIC_NAME>"
+    },
+    {
+      "Sid": "GuardState",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:PutParameter"],
+      "Resource": "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:parameter/<STATE_PATH_PREFIX>/*"
+    }
+  ]
+}

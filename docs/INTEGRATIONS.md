@@ -43,3 +43,7 @@ fi
 ## Inbox protocol
 
 The supported public interface is the companion CLI. Internally it writes one JSON file per event to `~/Library/Application Support/DevOnCall/inbox`. Atomic file writes let the menu app consume events without a network listener or privileged daemon.
+
+## AWS boxes (in-app producer)
+
+Not every alert comes from outside the app. The AWS boxes feature (Settings → AWS) is an in-app example of the same alert pipeline: when a running EC2 instance crosses the configured hour limit, the app builds the same `AlertEvent` type the CLI and Herdr scanner use and passes it through the same ingest/dedup path — no separate queue, no second delivery mechanism. If you build another in-app monitor, follow this pattern rather than writing to the inbox from inside the app process itself.

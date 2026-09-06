@@ -26,7 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.preferences.speechEnabled = false
         model.preferences.systemNotificationsEnabled = false
         let showSettings = CommandLine.arguments.contains("--ui-test-settings")
-        let size = showSettings ? NSSize(width: 720, height: 520) : NSSize(width: 404, height: 526)
+        let panelHeight: CGFloat = model.preferences.awsBoxesEnabled ? 736 : 526
+        let size = showSettings ? NSSize(width: 720, height: 520) : NSSize(width: 404, height: panelHeight)
         let rootView = showSettings
             ? AnyView(SettingsView(model: model))
             : AnyView(MenuPanel(model: model))
@@ -63,12 +64,20 @@ struct DevOnCallApp: App {
         MenuBarExtra {
             MenuPanel(model: model)
         } label: {
+            // One monochrome template glyph, no color, no text pill. The
+            // glyph itself swaps (see AppModel.menuBarSymbol) to carry
+            // armed/snoozed/critical state instead of a colored badge.
+            // The AWS running count — when the feature is on — is a plain
+            // number, matching the simple/no-color-box treatment of the
+            // standalone AWS Boxes app's own menu bar label.
             HStack(spacing: 3) {
                 Image(systemName: model.menuBarSymbol)
-                Text("ON")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                if model.preferences.awsBoxesEnabled, model.awsRunningCount > 0 {
+                    Text("\(model.awsRunningCount)")
+                        .font(.system(size: 11, weight: .semibold))
+                }
             }
-                .accessibilityLabel("Dev On Call — \(model.monitoringLabel)")
+                .accessibilityLabel(model.menuBarAccessibilityLabel)
         }
         .menuBarExtraStyle(.window)
 

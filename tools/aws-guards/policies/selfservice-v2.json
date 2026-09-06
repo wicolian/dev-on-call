@@ -1,0 +1,58 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SelfServiceOnOwnUser",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUser",
+        "iam:GetLoginProfile",
+        "iam:ListAccessKeys",
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:GetAccessKeyLastUsed",
+        "iam:ListMFADevices",
+        "iam:EnableMFADevice",
+        "iam:DeactivateMFADevice",
+        "iam:ResyncMFADevice",
+        "iam:ListSSHPublicKeys",
+        "iam:UploadSSHPublicKey",
+        "iam:DeleteSSHPublicKey",
+        "iam:GetSSHPublicKey",
+        "iam:UpdateSSHPublicKey",
+        "iam:ListServiceSpecificCredentials"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:user/${aws:username}"
+    },
+    {
+      "Sid": "SelfServiceOwnVirtualMfaDevice",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice"
+      ],
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:mfa/${aws:username}",
+        "arn:aws:iam::<ACCOUNT_ID>:mfa/${aws:username}-*"
+      ]
+    },
+    {
+      "Sid": "SelfServiceAccountWideReads",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ChangePassword",
+        "iam:GetAccountPasswordPolicy",
+        "iam:ListUsers",
+        "iam:ListVirtualMFADevices"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowCreateServiceLinkedRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::*:role/aws-service-role/*"
+    }
+  ]
+}

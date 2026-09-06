@@ -104,7 +104,62 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var aiTimeoutSeconds = 45
     public var probes: [ProbeRule] = []
 
+    // AWS Boxes — off by default. Region list empty means "use the built-in
+    // default region list" (owned by DevOnCallAWS, which this module does
+    // not depend on).
+    public var awsBoxesEnabled = false
+    public var awsProfile = "sako"
+    public var awsRegions: [String] = []
+    public var awsLongRunningAlertEnabled = true
+    public var awsLongRunningAlertHours = 12
+    /// Which owner name counts as "you" for the YOU badge and the "Only
+    /// mine" filter. Empty means "use the username derived from the AWS
+    /// caller identity", which is right whenever the IAM user is named
+    /// after the person. It isn't always: a shared account can hand out
+    /// per-machine bot users (`bots/kela-mac`) whose name has nothing to do
+    /// with the `Owner` tags or WorkSpace users they own, and then nothing
+    /// ever badges. This field is the manual override for that case.
+    public var awsOwnerName = ""
+    /// Whether the one-time local pre-fill of `awsOwnerName` has already
+    /// happened. Kept separate so clearing the field stays cleared instead
+    /// of being helpfully re-filled on the next launch.
+    public var awsOwnerNameDidPrefill = false
+
     public init() {}
+
+    // A custom decoder so preferences saved before the AWS Boxes fields
+    // existed still load their probes, quiet hours, sound settings, etc.
+    // instead of getting reset to AppPreferences() the first time this
+    // decode would otherwise fail on a missing key.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isArmed = try container.decodeIfPresent(Bool.self, forKey: .isArmed) ?? true
+        herdrEnabled = try container.decodeIfPresent(Bool.self, forKey: .herdrEnabled) ?? true
+        herdrPollSeconds = try container.decodeIfPresent(Int.self, forKey: .herdrPollSeconds) ?? 10
+        blockedDelaySeconds = try container.decodeIfPresent(Int.self, forKey: .blockedDelaySeconds) ?? 90
+        soundEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? false
+        customSoundPath = try container.decodeIfPresent(String.self, forKey: .customSoundPath) ?? ""
+        speechEnabled = try container.decodeIfPresent(Bool.self, forKey: .speechEnabled) ?? false
+        systemNotificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .systemNotificationsEnabled) ?? false
+        quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? true
+        quietStartHour = try container.decodeIfPresent(Int.self, forKey: .quietStartHour) ?? 23
+        quietEndHour = try container.decodeIfPresent(Int.self, forKey: .quietEndHour) ?? 8
+        allowCriticalDuringQuietHours = try container.decodeIfPresent(Bool.self, forKey: .allowCriticalDuringQuietHours) ?? false
+        snoozedUntil = try container.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        aiProvider = try container.decodeIfPresent(AIProvider.self, forKey: .aiProvider) ?? .off
+        aiModel = try container.decodeIfPresent(String.self, forKey: .aiModel) ?? ""
+        aiExecutablePath = try container.decodeIfPresent(String.self, forKey: .aiExecutablePath) ?? ""
+        aiTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .aiTimeoutSeconds) ?? 45
+        probes = try container.decodeIfPresent([ProbeRule].self, forKey: .probes) ?? []
+
+        awsBoxesEnabled = try container.decodeIfPresent(Bool.self, forKey: .awsBoxesEnabled) ?? false
+        awsProfile = try container.decodeIfPresent(String.self, forKey: .awsProfile) ?? "sako"
+        awsRegions = try container.decodeIfPresent([String].self, forKey: .awsRegions) ?? []
+        awsLongRunningAlertEnabled = try container.decodeIfPresent(Bool.self, forKey: .awsLongRunningAlertEnabled) ?? true
+        awsLongRunningAlertHours = try container.decodeIfPresent(Int.self, forKey: .awsLongRunningAlertHours) ?? 12
+        awsOwnerName = try container.decodeIfPresent(String.self, forKey: .awsOwnerName) ?? ""
+        awsOwnerNameDidPrefill = try container.decodeIfPresent(Bool.self, forKey: .awsOwnerNameDidPrefill) ?? false
+    }
 }
 
 public struct Detection: Equatable, Sendable {

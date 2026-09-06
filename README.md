@@ -104,6 +104,47 @@ In **Settings → Monitors**, add any command with this contract:
 
 Examples include a script that checks the latest GitHub Actions run, a review-bot status command, a local server health check, or a test watcher. Commands run as your macOS user, so only add commands you trust.
 
+## AWS boxes (for the Databrain team)
+
+If you're on the team and just want to keep an eye on our shared AWS account's EC2 boxes — see what's running, stop your own forgotten one, without typing any AWS CLI commands — this is for you.
+
+### What it shows
+
+- An **AWS Boxes** section in the popover, listing every EC2 instance in the shared account, grouped by region — name, type, state, spot/on-demand, and uptime. Terminated boxes are hidden: AWS keeps them in the API for about an hour after deletion and there is nothing left to do to them. Stopped boxes stay, since a stopped box still exists.
+- Our EC2 boxes live primarily in **ap-south-2 (Hyderabad)**, with `ap-south-1` (Mumbai) also checked while boxes are mid-move between the two.
+- A box tagged with your name in its `Owner` tag gets a small **YOU** badge, and the **Only mine** switch in the section header filters the list down to just those. The name comes from your AWS identity by default; if that isn't the name on your boxes — a shared account can sign you in as a per-machine user whose name matches nothing you own — set it yourself in **Settings → AWS → Ownership → Show boxes owned by**.
+- Rows running longer than 12 hours get an orange tint — a nudge that something may have been left on overnight.
+- Each row's **···** menu has **Stop**, **Start**, and **Terminate** (Terminate always asks for confirmation naming the instance first).
+
+![AWS Boxes list](docs/screenshots/aws-boxes-list.png)
+
+![AWS Boxes row menu](docs/screenshots/aws-boxes-row-menu.png)
+
+### WorkSpaces
+
+Underneath the EC2 groups, any region that has Amazon WorkSpaces desktops gets its own **WORKSPACES · REGION** group, listing one row per desktop in the same shape as a box row: its computer name (or its WorkSpace id while AWS is still building it and hasn't assigned one), the assigned user, the bundle's compute type (`g6f.2xlarge, GPU` for a graphics bundle), the state as the same coloured rail — green available, gray stopped, orange starting/stopping/pending/rebooting, red unhealthy — and, in the slot where a box shows uptime, when a human last connected. Two things read differently on purpose: the trailing tag carries the running mode with its budget (`AUTO-STOP 60M` or `ALWAYS-ON`) rather than spot/on-demand, because for a desktop that *is* the cost decision; and presence replaces uptime, because an always-on desktop has been up since the day it was made and the only number that means anything is when somebody last sat at it. The **YOU** badge and the **Only mine** switch work exactly as they do for boxes, matching the WorkSpace's assigned user against your own IAM username. The row's **···** menu offers **Start** when it's stopped and **Stop** / **Reboot** when it's available — Rebuild and Terminate are deliberately not offered anywhere in the app, since both wipe somebody's desktop. WorkSpaces is not sold in every region the box list covers (`ap-south-2` and `eu-north-1` have no WorkSpaces endpoint at all); those regions are skipped quietly rather than parking a permanent error banner over a working section.
+
+### How to enable it
+
+1. Open **Settings → AWS** and turn on **Show AWS boxes**.
+2. The AWS CLI profile field defaults to `sako` — leave it as is unless someone tells you otherwise.
+3. That's it. If your machine already has the `sako` profile configured, the list loads within a few seconds.
+
+### First run
+
+If you haven't run `aws configure --profile sako` yet, the AWS Boxes section shows a setup card instead of an error: a **Copy** button next to the exact command to run in Terminal. Paste your access key when prompted, and set the region to `ap-south-1` when it asks (the app itself checks both `ap-south-1` and `ap-south-2` regardless of what you set there). Ask in the team channel for an access key if you don't have one yet.
+
+### Everything else
+
+- The list auto-refreshes every 60 seconds; a manual refresh button is always there, and it disables itself while a refresh is already in flight so you can't queue up a pile of `aws` calls by mashing it.
+- Every `aws` CLI call has a hard timeout, so a hung CLI (bad network, stale SSO session) can't freeze the popover.
+- A CLI error (an expired SSO session, a missing `aws` binary) shows inline instead of crashing or hanging the app.
+- The menu-bar label shows the running-instance count as a plain number next to the status glyph.
+
+**Long-running alert:** optionally, the first time a running box crosses the configured hour limit, Dev On Call raises one warning straight into the same signal rail as every other alert (e.g. "EC2 box koushik-sandbox running 14h") — deduplicated the same way, through the same inbox path, not a second alerting system. An `AUTO_STOP` WorkSpace is never alerted however long it sits, because it parks itself and stops billing; an `ALWAYS_ON` WorkSpace nobody has connected to for longer than the same hour limit raises the same warning, since that is the only measurable waste on a desktop that is up by definition.
+
+Like the rest of the app, this shells out to the `aws` CLI (`--output json`, no SDK) using whatever credentials/profile resolution the CLI already has configured. Dev On Call never reads or stores AWS credentials.
+
 ## Custom sound and speech
 
 In **Settings → Alerts**:
@@ -139,6 +180,15 @@ Create distributable ZIP and DMG images:
 ```bash
 ./scripts/package-app.sh
 ```
+
+### Account-side spend guards
+
+[`tools/aws-guards`](tools/aws-guards) has three standalone Lambda
+functions (spend-guard, gpu-swap, idle-stop) for enforcing EC2 spend
+limits on the account side — the enforcement counterpart to this app's
+read-only-by-default AWS Boxes popover. Not wired into the app; deployed
+and configured independently. See its own README for thresholds and
+deploy steps.
 
 ## Honest limitations
 

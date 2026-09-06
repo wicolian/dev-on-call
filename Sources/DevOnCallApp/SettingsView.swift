@@ -1,8 +1,15 @@
 import AppKit
+import DevOnCallAWS
 import DevOnCallCore
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// Placeholder link for AWS onboarding. Point this at wherever the real
+/// setup guide ends up living (a repo doc, an internal wiki page) — this
+/// is the only place that needs to change. Shown both in Settings → AWS
+/// and in the popover's first-run setup card.
+let SETUP_GUIDE_URL = "https://github.com/wicolian/dev-on-call/blob/main/docs/AWS_SETUP.md"
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
@@ -13,6 +20,8 @@ struct SettingsView: View {
                 .tabItem { Label("Alerts", systemImage: "bell.badge") }
             MonitoringSettings(model: model)
                 .tabItem { Label("Monitors", systemImage: "waveform.path.ecg") }
+            AWSSettings(model: model)
+                .tabItem { Label("AWS", systemImage: "server.rack") }
             IntelligenceSettings(model: model)
                 .tabItem { Label("Voice", systemImage: "waveform.and.person.filled") }
             IntegrationSettings()
@@ -21,6 +30,129 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 720, height: 520)
+    }
+}
+
+private struct AWSSettings: View {
+    @ObservedObject var model: AppModel
+    @State private var newRegion = ""
+
+    var body: some View {
+        Form {
+            Section("EC2 boxes") {
+                Toggle("Show AWS boxes", isOn: $model.preferences.awsBoxesEnabled)
+                Text("Adds an AWS Boxes section to the popover: every EC2 instance across the regions below, grouped by region, with Stop/Start/Terminate. Terminated boxes are hidden — AWS keeps them in the API for about an hour after deletion. Off by default. Dev On Call shells out to the aws CLI the same way the rest of this app shells out to git and other tools — it never reads or stores AWS credentials.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if AWSClient.resolveBinaryPath() == nil {
+                    Text("The aws CLI isn't installed — install it first (e.g. \"brew install awscli\").")
+                        .font(.caption)
+                        .foregroundStyle(WatchPalette.warning)
+                }
+            }
+
+            Section("AWS CLI") {
+                TextField("Profile", text: $model.preferences.awsProfile, prompt: Text("sako"))
+                Text("Falls back to profile \"keladev\" automatically the first time \"sako\" can't authenticate. Haven't run \"aws configure\" yet? The popover shows a setup card with the exact command the first time you turn this on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Link("Setup guide", destination: URL(string: SETUP_GUIDE_URL) ?? URL(string: "https://github.com/wicolian/dev-on-call")!)
+                    .font(.caption)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(model.awsEffectiveRegions, id: \.self) { region in
+                        HStack {
+                            Text(region)
+                                .font(.system(.body, design: .monospaced))
+                            Spacer()
+                            Button {
+                                removeRegion(region)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 3)
+                        Divider()
+                    }
+                }
+
+                HStack {
+                    TextField("Add region", text: $newRegion, prompt: Text("eu-central-1"))
+                        .onSubmit(addRegion)
+                    Button("Add", action: addRegion)
+                        .disabled(newRegion.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Button("Reset to default regions") {
+                    model.preferences.awsRegions = model.awsDefaultRegions
+                }
+                .font(.caption)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+
+            Section("Ownership") {
+                TextField(
+                    "Show boxes owned by",
+                    text: $model.preferences.awsOwnerName,
+                    prompt: Text(ownerNamePrompt)
+                )
+                Text(ownerNameCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+
+            Section("Long-running alert") {
+                Toggle("Alert when a box runs longer than the limit", isOn: $model.preferences.awsLongRunningAlertEnabled)
+                Stepper(
+                    "Limit: \(model.preferences.awsLongRunningAlertHours) hours",
+                    value: $model.preferences.awsLongRunningAlertHours,
+                    in: 1...72
+                )
+                Text("The first time a running box crosses this limit, Dev On Call adds one warning to the signal rail (e.g. \"EC2 box koushik-sandbox running 14h\"), deduplicated the same way every other alert is. Rows past the limit are also tinted orange in the popover.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!model.preferences.awsBoxesEnabled)
+        }
+        .formStyle(.grouped)
+        .padding(.top, 8)
+    }
+
+    /// The placeholder shows what the field falls back to, so an empty box
+    /// still says what the app is doing rather than looking unconfigured.
+    private var ownerNamePrompt: String {
+        model.awsCurrentUserName ?? "Your AWS username"
+    }
+
+    private var ownerNameCaption: String {
+        var text = "A box's Owner tag or a WorkSpace's assigned user has to equal this for the row to get a YOU badge and to survive the \"Only mine\" filter. "
+        if let derived = model.awsCurrentUserName {
+            text += "Leave it empty to use the name from your AWS identity (\"\(derived)\") — set it when that isn't the name on your boxes, which happens when a shared account signs you in as a per-machine user whose name matches nothing you own."
+        } else {
+            text += "Leave it empty to use the name from your AWS identity, once a profile authenticates."
+        }
+        return text
+    }
+
+    private func addRegion() {
+        let trimmed = newRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var regions = model.awsEffectiveRegions
+        guard !regions.contains(trimmed) else {
+            newRegion = ""
+            return
+        }
+        regions.append(trimmed)
+        model.preferences.awsRegions = regions
+        newRegion = ""
+    }
+
+    private func removeRegion(_ region: String) {
+        var regions = model.awsEffectiveRegions
+        regions.removeAll { $0 == region }
+        model.preferences.awsRegions = regions
     }
 }
 
