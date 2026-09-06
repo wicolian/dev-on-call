@@ -148,6 +148,15 @@ public enum InstanceState: String, Hashable, Sendable {
         }
     }
 
+    /// Whether the box is gone rather than merely off. EC2 keeps a
+    /// terminated instance in DescribeInstances for about an hour after it
+    /// is deleted, which fills the list with rows nothing can be done to.
+    /// `stopped` is deliberately not included — a stopped box still exists,
+    /// still holds its volumes, and is exactly the thing worth seeing.
+    public var isGone: Bool {
+        self == .terminated || self == .shuttingDown
+    }
+
     /// Sort priority: running instances float to the top.
     public var sortRank: Int {
         switch self {
@@ -321,6 +330,14 @@ extension EC2DescribeInstancesResponse {
 // MARK: - Sorting
 
 extension Array where Element == Instance {
+    /// Drops boxes that no longer exist. Kept separate from
+    /// `sortedForDisplay()` — which still never filters anything — so the
+    /// one place that hides rows is explicit and testable rather than
+    /// buried in a sort.
+    public func excludingGone() -> [Instance] {
+        filter { !$0.state.isGone }
+    }
+
     /// Running first, then by launch time (oldest first, so forgotten boxes
     /// surface at the top of their group). Every instance in the array is
     /// kept — this never filters by state or lifecycle.

@@ -41,7 +41,7 @@ private struct AWSSettings: View {
         Form {
             Section("EC2 boxes") {
                 Toggle("Show AWS boxes", isOn: $model.preferences.awsBoxesEnabled)
-                Text("Adds an AWS Boxes section to the popover: every EC2 instance across the regions below, grouped by region, with Stop/Start/Terminate. Off by default. Dev On Call shells out to the aws CLI the same way the rest of this app shells out to git and other tools — it never reads or stores AWS credentials.")
+                Text("Adds an AWS Boxes section to the popover: every EC2 instance across the regions below, grouped by region, with Stop/Start/Terminate. Terminated boxes are hidden — AWS keeps them in the API for about an hour after deletion. Off by default. Dev On Call shells out to the aws CLI the same way the rest of this app shells out to git and other tools — it never reads or stores AWS credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if AWSClient.resolveBinaryPath() == nil {

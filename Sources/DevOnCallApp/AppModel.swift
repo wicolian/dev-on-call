@@ -323,7 +323,11 @@ final class AppModel: ObservableObject {
         let (fetched, errors) = await instancesResult
         let (fetchedWorkspaces, workspaceErrors) = await workspacesResult
 
-        awsInstances = fetched
+        // A terminated box lingers in DescribeInstances for about an hour
+        // after it's deleted. Dropping those here rather than in the view
+        // keeps them out of the list, the per-region counts, the running
+        // count and the long-running alert in one move.
+        awsInstances = fetched.excludingGone()
         awsRegionErrors = errors
         awsWorkspaces = fetchedWorkspaces
         awsWorkspaceRegionErrors = workspaceErrors

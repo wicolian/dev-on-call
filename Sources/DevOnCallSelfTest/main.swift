@@ -165,6 +165,20 @@ let sampleDescribeInstancesJSON = """
           "State": { "Name": "stopped" },
           "LaunchTime": "2020-01-01T00:00:00.000Z",
           "Tags": [{ "Key": "Name", "Value": "staging-api" }]
+        },
+        {
+          "InstanceId": "i-0ccccccccccccccc0",
+          "InstanceType": "t3.small",
+          "State": { "Name": "terminated" },
+          "LaunchTime": "2020-01-01T00:00:00.000Z",
+          "Tags": [{ "Key": "Name", "Value": "deleted-an-hour-ago" }]
+        },
+        {
+          "InstanceId": "i-0dddddddddddddd00",
+          "InstanceType": "t3.small",
+          "State": { "Name": "shutting-down" },
+          "LaunchTime": "2020-01-01T00:00:00.000Z",
+          "Tags": [{ "Key": "Name", "Value": "being-deleted-now" }]
         }
       ]
     }
@@ -174,13 +188,28 @@ let sampleDescribeInstancesJSON = """
 do {
     let decoded = try JSONDecoder().decode(EC2DescribeInstancesResponse.self, from: sampleDescribeInstancesJSON)
     let instances = decoded.toInstances(region: "us-east-1")
-    expect(instances.count == 2, "both reservations' instances decode — none silently dropped")
+    expect(instances.count == 4, "both reservations' instances decode — none silently dropped")
     let spot = instances.first { $0.displayName == "koushik-sandbox" }
     expect(spot?.lifecycle == .spot, "a spot instance keeps its spot lifecycle, not filtered or reclassified")
     expect(spot?.isLongRunning() == true, "a box running since 2020 is flagged long-running")
     let sorted = instances.sortedForDisplay()
-    expect(sorted.count == 2, "sortedForDisplay never drops an instance")
+    expect(sorted.count == 4, "sortedForDisplay never drops an instance")
     expect(sorted.first?.state == .running, "running instances sort first")
+
+    // EC2 keeps a terminated box in DescribeInstances for about an hour
+    // after it's deleted. Those rows are noise — nothing can be done to
+    // them — so they never reach the list, while a stopped box, which
+    // still exists and still holds its volumes, always does.
+    let visible = instances.excludingGone()
+    expect(visible.count == 2, "a terminated and a shutting-down box are both dropped from the list")
+    expect(visible.contains { $0.displayName == "staging-api" }, "a stopped box is kept — it still exists")
+    expect(visible.contains { $0.displayName == "koushik-sandbox" }, "a running box is kept")
+    expect(!visible.contains { $0.displayName == "deleted-an-hour-ago" }, "a terminated box is hidden")
+    expect(!visible.contains { $0.displayName == "being-deleted-now" }, "a shutting-down box is hidden")
+    expect(visible.filter { $0.state == .running }.count == 1, "the running count only sees boxes that still exist")
+    expect(InstanceState.terminated.isGone && InstanceState.shuttingDown.isGone, "terminated and shutting-down count as gone")
+    expect(!InstanceState.stopped.isGone && !InstanceState.running.isGone && !InstanceState.stopping.isGone,
+           "stopped, running and stopping boxes are never treated as gone")
 } catch {
     failures += 1
     print("FAIL  EC2 instance decode threw \(error)")
